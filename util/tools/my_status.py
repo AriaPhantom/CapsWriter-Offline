@@ -5,6 +5,8 @@ Rich Status 扩展模块
 提供增强版的 Status 类，支持状态追踪。
 """
 
+import sys
+
 from rich.console import RenderableType
 from rich.style import StyleType
 from rich.status import Status as RichStatus
@@ -49,15 +51,21 @@ class Status(RichStatus):
             refresh_per_second=refresh_per_second,
         )
         self.started = False
+        try:
+            self.enabled = bool(getattr(sys.stdout, "isatty", lambda: False)())
+        except Exception:
+            self.enabled = False
 
     def start(self) -> None:
         """启动动画（如果尚未启动）"""
         if not self.started:
             self.started = True
-            super().start()
+            if self.enabled:
+                super().start()
 
     def stop(self) -> None:
         """停止动画（如果已启动）"""
         if self.started:
             self.started = False
-            super().stop()
+            if self.enabled:
+                super().stop()

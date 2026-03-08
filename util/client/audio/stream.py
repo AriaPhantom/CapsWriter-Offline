@@ -53,7 +53,64 @@ class AudioStreamManager:
         """
         self.state = state
         self._channels = 1
+        self._device_index = None
         self._running = False  # 标志是否应该运行
+        self._reopen_lock = threading.Lock()
+        self._reopen_pending = False
+
+    def _resolve_input_device(self):
+        """解析输入设备；默认设备不可用时，回退到第一个可用输入设备。"""
+        try:
+            device = sd.query_devices(kind='input')
+            default_device = sd.default.device
+            device_index = None
+            if isinstance(default_device, (list, tuple)) and default_device:
+                device_index = default_device[0]
+                if device_index == -1:
+                    device_index = None
+            return device_index, device
+        except sd.PortAudioError as default_error:
+            try:
+                devices = sd.query_devices()
+            except Exception:
+                raise default_error
+
+            candidates = []
+            for index, candidate in enumerate(devices):
+                if candidate.get('max_input_channels', 0) > 0:
+                    name = candidate.get('name', '未知设备')
+                    lower_name = name.lower()
+                    score = 0
+
+                    preferred_tokens = ('麦克风', 'microphone', 'mic', 'headset', 'realtek', 'usb')
+                    virtual_tokens = (
+                        'sonic studio',
+                        'virtual',
+                        'vad',
+                        'wave speaker',
+                        'stereo mix',
+                        'what u hear',
+                        'loopback',
+                        'mix',
+                        'output',
+                        'speaker',
+                    )
+
+                    if any(token in lower_name for token in preferred_tokens):
+                        score -= 10
+                    if any(token in lower_name for token in virtual_tokens):
+                        score += 100
+
+                    candidates.append((score, index, candidate))
+
+            if candidates:
+                _, index, candidate = sorted(candidates, key=lambda item: (item[0], item[1]))[0]
+                logger.warning(
+                    f"默认输入设备不可用，回退到输入设备 #{index}: {candidate.get('name', '未知设备')}"
+                )
+                return index, candidate
+
+            raise default_error
     
     def _audio_callback(
         self,
@@ -92,9 +149,27 @@ class AudioStreamManager:
         # 只有在应该运行且不是手动停止、且系统未处于关闭状态的情况下才重启
         if self._running and not lifecycle.is_shutting_down:
             logger.info("音频流意外结束，正在尝试重启...")
-            self.reopen()
+            self._schedule_reopen()
         else:
             logger.debug("音频流已正常结束")
+
+    def _schedule_reopen(self) -> None:
+        """异步调度音频流重启，避免在 PortAudio/CFFI 回调线程里直接重开。"""
+        with self._reopen_lock:
+            if self._reopen_pending:
+                logger.debug("音频流重启任务已在进行中，跳过重复调度")
+                return
+            self._reopen_pending = True
+
+        def worker() -> None:
+            try:
+                time.sleep(0.2)
+                self.reopen()
+            finally:
+                with self._reopen_lock:
+                    self._reopen_pending = False
+
+        threading.Thread(target=worker, daemon=True).start()
     
     def open(self) -> Optional[sd.InputStream]:
         """
@@ -105,11 +180,11 @@ class AudioStreamManager:
         """
         # 检测音频设备
         try:
-            device = sd.query_devices(kind='input')
+            self._device_index, device = self._resolve_input_device()
             self._channels = min(2, device['max_input_channels'])
             device_name = device.get('name', '未知设备')
             console.print(
-                f'使用默认音频设备：[italic]{device_name}，声道数：{self._channels}',
+                f'使用输入设备：[italic]{device_name}，声道数：{self._channels}',
                 end='\n\n'
             )
             logger.info(f"找到音频设备: {device_name}, 声道数: {self._channels}")
@@ -123,15 +198,16 @@ class AudioStreamManager:
         except sd.PortAudioError:
             console.print("没有找到麦克风设备", end='\n\n', style='bright_red')
             logger.error("未找到麦克风设备")
-            input('按回车键退出')
-            sys.exit(1)
+            self.state.stream = None
+            self._running = False
+            return None
         
         # 创建音频流
         try:
             stream = sd.InputStream(
                 samplerate=self.SAMPLE_RATE,
                 blocksize=int(self.BLOCK_DURATION * self.SAMPLE_RATE),
-                device=None,
+                device=self._device_index,
                 dtype="float32",
                 channels=self._channels,
                 callback=self._audio_callback,
