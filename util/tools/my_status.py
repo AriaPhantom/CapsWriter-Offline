@@ -52,7 +52,11 @@ class Status(RichStatus):
         )
         self.started = False
         try:
-            self.enabled = bool(getattr(sys.stdout, "isatty", lambda: False)())
+            stream = getattr(sys, "stdout", None)
+            is_tty = bool(getattr(stream, "isatty", lambda: False)()) if stream else False
+            encoding = (getattr(stream, "encoding", "") or "").lower() if stream else ""
+            # Rich 的部分 spinner（如 point）包含 Unicode 字符，非 UTF 控制台容易抛编码异常
+            self.enabled = is_tty and ("utf" in encoding or "65001" in encoding)
         except Exception:
             self.enabled = False
 
@@ -61,11 +65,18 @@ class Status(RichStatus):
         if not self.started:
             self.started = True
             if self.enabled:
-                super().start()
+                try:
+                    super().start()
+                except Exception:
+                    # 控制台不可写/编码异常时，自动降级为禁用状态动画
+                    self.enabled = False
 
     def stop(self) -> None:
         """停止动画（如果已启动）"""
         if self.started:
             self.started = False
             if self.enabled:
-                super().stop()
+                try:
+                    super().stop()
+                except Exception:
+                    self.enabled = False

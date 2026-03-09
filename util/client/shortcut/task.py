@@ -56,6 +56,46 @@ class ShortcutTask:
         # 录音状态动画
         self._status = Status('开始录音', spinner='point')
 
+    def _queue_event(self, event_type: str, timestamp: float) -> None:
+        """向音频队列提交 begin/finish 事件，并记录异步异常。"""
+        if not self.state.loop or not self.state.queue_in:
+            raise RuntimeError("事件循环或音频队列尚未初始化")
+
+        future = asyncio.run_coroutine_threadsafe(
+            self.state.queue_in.put({'type': event_type, 'time': timestamp, 'data': None}),
+            self.state.loop,
+        )
+
+        def _on_done(done_future):
+            if done_future.cancelled():
+                logger.debug(f"[{self.shortcut.key}] queue<{event_type}> 已取消")
+                return
+            try:
+                done_future.result()
+                logger.debug(f"[{self.shortcut.key}] queue<{event_type}> 入队完成")
+            except Exception as e:
+                logger.error(f"[{self.shortcut.key}] queue<{event_type}> 入队失败: {e}", exc_info=True)
+
+        future.add_done_callback(_on_done)
+
+    def _on_recorder_done(self, done_future) -> None:
+        """录音协程完成回调，避免异常静默吞掉。"""
+        self.task = None
+        if done_future.cancelled():
+            logger.debug(f"[{self.shortcut.key}] 录音协程已取消")
+            return
+        try:
+            done_future.result()
+        except Exception as e:
+            logger.error(f"[{self.shortcut.key}] 录音协程异常退出: {e}", exc_info=True)
+
+    def _safe_stop_status(self) -> None:
+        """安全停止状态动画，避免异常传播到监听线程。"""
+        try:
+            self._status.stop()
+        except Exception as e:
+            logger.debug(f"[{self.shortcut.key}] 停止状态动画失败（已忽略）: {e}")
+
     def _get_recorder(self) -> 'AudioRecorder':
         """获取 AudioRecorder 实例"""
         if self._recorder_class is None:
@@ -67,28 +107,33 @@ class ShortcutTask:
         """启动录音任务"""
         logger.info(f"[{self.shortcut.key}] 触发：开始录音")
 
-        # 记录开始时间
-        self.recording_start_time = time.time()
-        self.is_recording = True
+        try:
+            # 记录开始时间
+            self.recording_start_time = time.time()
+            self.is_recording = True
 
-        # 将开始标志放入队列
-        asyncio.run_coroutine_threadsafe(
-            self.state.queue_in.put({'type': 'begin', 'time': self.recording_start_time, 'data': None}),
-            self.state.loop
-        )
+            # 将开始标志放入队列
+            self._queue_event('begin', self.recording_start_time)
 
-        # 更新录音状态
-        self.state.start_recording(self.recording_start_time)
+            # 更新录音状态
+            self.state.start_recording(self.recording_start_time)
 
-        # 打印动画：正在录音
-        self._status.start()
+            # 打印动画：正在录音
+            self._status.start()
 
-        # 启动识别任务
-        recorder = self._get_recorder()
-        self.task = asyncio.run_coroutine_threadsafe(
-            recorder.record_and_send(),
-            self.state.loop,
-        )
+            # 启动识别任务
+            recorder = self._get_recorder()
+            self.task = asyncio.run_coroutine_threadsafe(
+                recorder.record_and_send(),
+                self.state.loop,
+            )
+            self.task.add_done_callback(self._on_recorder_done)
+        except Exception as e:
+            logger.error(f"[{self.shortcut.key}] 启动录音失败: {e}", exc_info=True)
+            self.is_recording = False
+            self.state.stop_recording()
+            self._safe_stop_status()
+            self.task = None
 
     def cancel(self) -> None:
         """取消录音任务（时间过短）"""
@@ -96,27 +141,27 @@ class ShortcutTask:
 
         self.is_recording = False
         self.state.stop_recording()
-        self._status.stop()
+        self._safe_stop_status()
 
-        self.task.cancel()
+        if self.task is not None:
+            self.task.cancel()
         self.task = None
 
     def finish(self) -> None:
         """完成录音任务"""
         logger.info(f"[{self.shortcut.key}] 释放：完成录音")
 
-        self.is_recording = False
-        self.state.stop_recording()
-        self._status.stop()
+        try:
+            self.is_recording = False
+            self.state.stop_recording()
+            logger.debug(f"[{self.shortcut.key}] finish: 录音状态已停止")
 
-        asyncio.run_coroutine_threadsafe(
-            self.state.queue_in.put({
-                'type': 'finish',
-                'time': time.time(),
-                'data': None
-            }),
-            self.state.loop
-        )
+            self._queue_event('finish', time.time())
+            logger.debug(f"[{self.shortcut.key}] finish: 结束事件已入队")
+        except Exception as e:
+            logger.error(f"[{self.shortcut.key}] 完成录音时发生异常: {e}", exc_info=True)
+        finally:
+            self._safe_stop_status()
 
         # 执行 restore（可恢复按键 + 非阻塞模式）
         # 阻塞模式下按键不会发送到系统，状态不会改变，不需要恢复

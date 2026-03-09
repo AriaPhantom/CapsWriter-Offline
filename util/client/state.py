@@ -9,7 +9,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,7 +32,35 @@ _theme = Theme({
     'markdown.code': 'cyan',
     'markdown.item.number': 'yellow'
 })
-console = Console(highlight=False, soft_wrap=True, theme=_theme)
+
+
+class SafeConsole(Console):
+    """在无控制台/句柄失效场景下容错的 Console。"""
+
+    def print(self, *args, **kwargs):
+        try:
+            return super().print(*args, **kwargs)
+        except OSError as e:
+            logger.debug(f"控制台输出失败（print），已忽略: {e}")
+
+    def line(self, *args, **kwargs):
+        try:
+            return super().line(*args, **kwargs)
+        except OSError as e:
+            logger.debug(f"控制台输出失败（line），已忽略: {e}")
+
+
+def _resolve_console_stream():
+    stream = getattr(sys, 'stdout', None)
+    try:
+        if stream is not None and getattr(stream, 'isatty', lambda: False)():
+            return stream
+    except Exception:
+        pass
+    return open(os.devnull, 'w', encoding='utf-8')
+
+
+console = SafeConsole(highlight=False, soft_wrap=True, theme=_theme, file=_resolve_console_stream())
 
 
 @dataclass
