@@ -114,20 +114,11 @@ class BackendManager:
 
     def is_port_open(self, host: str = "127.0.0.1", port: int = PORT) -> bool:
         try:
-            for conn in psutil.net_connections(kind="tcp"):
-                if not conn.laddr:
-                    continue
-                if conn.laddr.port != port:
-                    continue
-                if conn.status != psutil.CONN_LISTEN:
-                    continue
-                if host not in ("0.0.0.0", "127.0.0.1"):
-                    if conn.laddr.ip not in (host, "0.0.0.0"):
-                        continue
+            target_host = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+            with socket.create_connection((target_host, port), timeout=0.15):
                 return True
-        except Exception:
+        except OSError:
             return False
-        return False
 
     def _spawn_hidden(self, target: LaunchTarget) -> None:
         subprocess.Popen(
@@ -378,6 +369,11 @@ class CapsWriterGUI:
         elif page_id == "client_logs": self.btn_client_logs.state(["selected"])
         elif page_id == "server_logs": self.btn_server_logs.state(["selected"])
 
+        if page_id == "client_logs":
+            self._refresh_log_text("client", force=True)
+        elif page_id == "server_logs":
+            self._refresh_log_text("server", force=True)
+
     def _create_overview_page(self) -> ttk.Frame:
         page = ttk.Frame(self.main_container, style="Main.TFrame", padding=18)
         
@@ -501,9 +497,11 @@ class CapsWriterGUI:
             return
         self._refresh_status()
         self._populate_log_choices()
-        self._refresh_log_text("client")
-        self._refresh_log_text("server")
-        self.refresh_job = self.root.after(1500, self._schedule_refresh)
+        if self.current_page == "client_logs":
+            self._refresh_log_text("client")
+        elif self.current_page == "server_logs":
+            self._refresh_log_text("server")
+        self.refresh_job = self.root.after(2500, self._schedule_refresh)
 
     def _refresh_status(self) -> None:
         server_count = len(self.manager.server_processes())
@@ -562,6 +560,13 @@ class CapsWriterGUI:
         path = LOG_DIR / name
         return path if path.exists() else None
 
+    def _read_log_tail_lines(self, path: Path, max_lines: int = 160) -> list[str]:
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as fh:
+                return list(deque(fh, maxlen=max_lines))
+        except OSError:
+            return []
+
     def _refresh_log_text(self, prefix: str, force: bool = False) -> None:
         text_widget = self.client_text if prefix == "client" else self.server_text
         if text_widget is None:
@@ -574,7 +579,7 @@ class CapsWriterGUI:
             return
         try:
             with path.open("r", encoding="utf-8", errors="replace") as fh:
-                tail = "".join(deque(fh, maxlen=220))
+                tail = "".join(deque(fh, maxlen=140))
         except OSError as exc:
             tail = f"Failed to read logs: {exc}"
         text_widget.configure(state="normal")
@@ -586,13 +591,10 @@ class CapsWriterGUI:
 
     def _extract_last_result(self) -> str:
         for prefix in ("client", "server"):
-            path = self._selected_log_path(prefix) or self._latest_log(prefix)
+            path = self._latest_log(prefix)
             if not path:
                 continue
-            try:
-                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                continue
+            lines = self._read_log_tail_lines(path)
             for line in reversed(lines):
                 for marker in ("收到最终识别结果:", "麦克风识别结果:"):
                     if marker in line:
@@ -601,13 +603,10 @@ class CapsWriterGUI:
 
     def _extract_last_error(self) -> str:
         for prefix in ("client", "server"):
-            path = self._selected_log_path(prefix) or self._latest_log(prefix)
+            path = self._latest_log(prefix)
             if not path:
                 continue
-            try:
-                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                continue
+            lines = self._read_log_tail_lines(path)
             for line in reversed(lines):
                 if " - ERROR - " in line:
                     # Clean up error line for display
@@ -640,166 +639,6 @@ class CapsWriterGUI:
             "start": ("Starting Backend...", self.manager.start_all),
             "restart": ("Restarting Backend...", self.manager.restart_all),
             "stop": ("Stopping Backend...", self.manager.stop_all),
-        }
-        activity_text, func = actions.get(self.backend_action, actions["start"])
-        self._run_async(activity_text, func)
-
-
-    @staticmethod
-    def _log_day_token(file_name: str) -> str:
-        match = re.match(r"^(?:client|server)_(\d{8})\.log$", file_name)
-        return match.group(1) if match else ""
-
-    def _should_roll_to_latest_day(self, current_name: str, latest_name: str) -> bool:
-        current_day = self._log_day_token(current_name)
-        latest_day = self._log_day_token(latest_name)
-        return bool(current_day and latest_day and latest_day > current_day)
-
-    def _on_log_selected(self, prefix: str) -> None:
-        variable = self.client_log_choice if prefix == "client" else self.server_log_choice
-        selected = variable.get()
-        latest = self._latest_log(prefix)
-        self.log_auto_follow[prefix] = bool(latest and selected == latest.name)
-        self._refresh_log_text(prefix, force=True)
-
-    def _schedule_refresh(self) -> None:
-        if self.control_stop.is_set():
-            return
-        self._refresh_status()
-        self._populate_log_choices()
-        self._refresh_log_text("client")
-        self._refresh_log_text("server")
-        self.refresh_job = self.root.after(1500, self._schedule_refresh)
-
-    def _refresh_status(self) -> None:
-        server_count = len(self.manager.server_processes())
-        client_count = len(self.manager.client_processes())
-        port_open = self.manager.is_port_open()
-        if server_count and client_count and port_open:
-            self.status_backend.set("已运行")
-        elif server_count or client_count:
-            self.status_backend.set("部分运行")
-        else:
-            self.status_backend.set("未运行")
-        self.status_port.set("监听中" if port_open else "未监听")
-        self.status_client.set(f"运行中（{client_count}）" if client_count else "未运行")
-        latest_result = self._extract_last_result()
-        if latest_result:
-            self.last_result.set(latest_result)
-        self.last_error.set(self._extract_last_error() or "尚无错误")
-
-    def _populate_log_choices(self, initial: bool = False) -> None:
-        for prefix, combo, variable in (("client", self.client_log_combo, self.client_log_choice), ("server", self.server_log_combo, self.server_log_choice)):
-            if combo is None:
-                continue
-            files = sorted(LOG_DIR.glob(f"{prefix}_*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
-            names = [f.name for f in files]
-            combo["values"] = names
-
-            if not names:
-                variable.set("")
-                self.log_auto_follow[prefix] = True
-                continue
-
-            current = variable.get()
-            latest = names[0]
-
-            if not current or current not in names:
-                variable.set(latest)
-                self.log_auto_follow[prefix] = True
-            elif self.log_auto_follow[prefix]:
-                if current != latest:
-                    variable.set(latest)
-            elif self._should_roll_to_latest_day(current, latest):
-                variable.set(latest)
-                self.log_auto_follow[prefix] = True
-            elif initial:
-                variable.set(current)
-
-    def _selected_log_path(self, prefix: str) -> Path | None:
-        name = self.client_log_choice.get() if prefix == "client" else self.server_log_choice.get()
-        if not name:
-            return None
-        path = LOG_DIR / name
-        return path if path.exists() else None
-
-    def _refresh_log_text(self, prefix: str, force: bool = False) -> None:
-        text_widget = self.client_text if prefix == "client" else self.server_text
-        if text_widget is None:
-            return
-        path = self._selected_log_path(prefix)
-        if path is None:
-            return
-        mtime = path.stat().st_mtime
-        if not force and self.last_log_state[prefix] == (str(path), mtime):
-            return
-        try:
-            with path.open("r", encoding="utf-8", errors="replace") as fh:
-                tail = "".join(deque(fh, maxlen=400))
-        except OSError as exc:
-            tail = f"无法读取日志：{exc}"
-        text_widget.configure(state="normal")
-        text_widget.delete("1.0", "end")
-        text_widget.insert("1.0", tail)
-        text_widget.see("end")
-        text_widget.configure(state="disabled")
-        self.last_log_state[prefix] = (str(path), mtime)
-
-    def _extract_last_result(self) -> str:
-        for prefix in ("client", "server"):
-            path = self._selected_log_path(prefix) or self._latest_log(prefix)
-            if not path:
-                continue
-            try:
-                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                continue
-            for line in reversed(lines):
-                for marker in ("收到最终识别结果:", "麦克风识别结果:"):
-                    if marker in line:
-                        return line.split(marker, 1)[1].strip()
-        return ""
-
-    def _extract_last_error(self) -> str:
-        for prefix in ("client", "server"):
-            path = self._selected_log_path(prefix) or self._latest_log(prefix)
-            if not path:
-                continue
-            try:
-                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                continue
-            for line in reversed(lines):
-                if " - ERROR - " in line:
-                    return line.strip()
-        return ""
-
-    def _latest_log(self, prefix: str) -> Path | None:
-        files = sorted(LOG_DIR.glob(f"{prefix}_*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
-        return files[0] if files else None
-
-    def _open_selected_log(self, prefix: str) -> None:
-        path = self._selected_log_path(prefix)
-        if path:
-            os.startfile(str(path))
-
-    def _run_async(self, activity_text: str, func) -> None:
-        self.activity.set(activity_text)
-
-        def worker() -> None:
-            try:
-                func()
-                self.root.after(0, lambda: self.activity.set(f"{activity_text} 完成"))
-            except Exception as exc:  # noqa: BLE001
-                self.root.after(0, lambda: self.activity.set(f"操作失败：{exc}"))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _run_initial_backend_action(self) -> None:
-        actions = {
-            "start": ("正在启动后台…", self.manager.start_all),
-            "restart": ("正在重启后台…", self.manager.restart_all),
-            "stop": ("正在停止后台…", self.manager.stop_all),
         }
         activity_text, func = actions.get(self.backend_action, actions["start"])
         self._run_async(activity_text, func)
