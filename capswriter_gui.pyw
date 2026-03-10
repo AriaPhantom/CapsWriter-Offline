@@ -244,6 +244,10 @@ class CapsWriterGUI:
         self.server_text: scrolledtext.ScrolledText | None = None
         self.last_log_state: dict[str, tuple[str, float]] = {"client": ("", 0.0), "server": ("", 0.0)}
         self.log_auto_follow: dict[str, bool] = {"client": True, "server": True}
+        self.refresh_worker: threading.Thread | None = None
+        self.refresh_pending = False
+        self.initial_log_refresh_pending = False
+        self.force_log_refresh: dict[str, bool] = {"client": False, "server": False}
 
         self.tray_icon: pystray.Icon | None = None
         self.tray_thread: threading.Thread | None = None
@@ -256,9 +260,9 @@ class CapsWriterGUI:
 
         self._build_styles()
         self._build_ui()
-        self._populate_log_choices(initial=True)
         self._start_control_server()
         self._run_initial_backend_action()
+        self._request_refresh(force_log_prefixes=("client", "server"), initial=True)
         self._schedule_refresh()
 
         if self.smoke_test:
@@ -370,9 +374,9 @@ class CapsWriterGUI:
         elif page_id == "server_logs": self.btn_server_logs.state(["selected"])
 
         if page_id == "client_logs":
-            self._refresh_log_text("client", force=True)
+            self._request_refresh(force_log_prefixes=("client",))
         elif page_id == "server_logs":
-            self._refresh_log_text("server", force=True)
+            self._request_refresh(force_log_prefixes=("server",))
 
     def _create_overview_page(self) -> ttk.Frame:
         page = ttk.Frame(self.main_container, style="Main.TFrame", padding=18)
@@ -439,7 +443,7 @@ class CapsWriterGUI:
         else:
             self.server_log_combo = combo
             
-        ttk.Button(controls, text="Refresh", style="Caps.TButton", command=lambda p=prefix: self._refresh_log_text(p, force=True)).pack(side="left", padx=5)
+        ttk.Button(controls, text="Refresh", style="Caps.TButton", command=lambda p=prefix: self._request_refresh(force_log_prefixes=(p,))).pack(side="left", padx=5)
         ttk.Button(controls, text="Open File", style="Caps.TButton", command=lambda p=prefix: self._open_selected_log(p)).pack(side="left", padx=5)
 
         text_container = ttk.Frame(page, style="Card.TFrame", padding=1)
@@ -490,68 +494,192 @@ class CapsWriterGUI:
         selected = variable.get()
         latest = self._latest_log(prefix)
         self.log_auto_follow[prefix] = bool(latest and selected == latest.name)
-        self._refresh_log_text(prefix, force=True)
+        self._request_refresh(force_log_prefixes=(prefix,))
 
     def _schedule_refresh(self) -> None:
         if self.control_stop.is_set():
             return
-        self._refresh_status()
-        self._populate_log_choices()
-        if self.current_page == "client_logs":
-            self._refresh_log_text("client")
-        elif self.current_page == "server_logs":
-            self._refresh_log_text("server")
+        self._request_refresh()
         self.refresh_job = self.root.after(2500, self._schedule_refresh)
 
-    def _refresh_status(self) -> None:
+    def _request_refresh(self, force_log_prefixes: tuple[str, ...] = (), initial: bool = False) -> None:
+        if self.control_stop.is_set():
+            return
+        for prefix in force_log_prefixes:
+            self.force_log_refresh[prefix] = True
+        if initial:
+            self.initial_log_refresh_pending = True
+        self.refresh_pending = True
+        if self.refresh_worker is None or not self.refresh_worker.is_alive():
+            self._start_refresh_worker()
+
+    def _start_refresh_worker(self) -> None:
+        if self.control_stop.is_set():
+            return
+        if not self.refresh_pending and not self.initial_log_refresh_pending and not any(self.force_log_refresh.values()):
+            return
+
+        context = {
+            "current_page": self.current_page,
+            "selected_logs": {
+                "client": self.client_log_choice.get(),
+                "server": self.server_log_choice.get(),
+            },
+            "auto_follow": dict(self.log_auto_follow),
+            "last_log_state": dict(self.last_log_state),
+            "force_logs": dict(self.force_log_refresh),
+            "initial": self.initial_log_refresh_pending,
+        }
+        self.refresh_pending = False
+        self.initial_log_refresh_pending = False
+        self.force_log_refresh = {"client": False, "server": False}
+
+        def worker() -> None:
+            try:
+                snapshot = self._collect_refresh_snapshot(context)
+                self.root.after(0, lambda: self._apply_refresh_snapshot(context, snapshot))
+            except Exception as exc:  # noqa: BLE001
+                self.root.after(0, lambda: self._handle_refresh_error(exc))
+
+        self.refresh_worker = threading.Thread(target=worker, daemon=True)
+        self.refresh_worker.start()
+
+    def _handle_refresh_error(self, exc: Exception) -> None:
+        self.activity.set(f"Refresh Failed: {exc}")
+        self._finish_refresh_cycle()
+
+    def _finish_refresh_cycle(self) -> None:
+        self.refresh_worker = None
+        if self.control_stop.is_set():
+            return
+        if self.refresh_pending or self.initial_log_refresh_pending or any(self.force_log_refresh.values()):
+            self._start_refresh_worker()
+
+    def _collect_refresh_snapshot(self, context: dict) -> dict:
+        latest_logs: dict[str, Path | None] = {}
+        log_snapshots: dict[str, dict] = {}
+
+        for prefix in ("client", "server"):
+            entries = self._list_log_entries(prefix)
+            names = [item["name"] for item in entries]
+            selected_name, auto_follow = self._resolve_log_choice(
+                names,
+                context["selected_logs"][prefix],
+                context["auto_follow"][prefix],
+                context["initial"],
+            )
+            latest_logs[prefix] = LOG_DIR / names[0] if names else None
+
+            preview_requested = context["force_logs"][prefix] or context["current_page"] == f"{prefix}_logs"
+            log_text: str | None = None
+            log_state = ("", 0.0)
+
+            if selected_name:
+                path = LOG_DIR / selected_name
+                try:
+                    mtime = path.stat().st_mtime
+                    log_state = (str(path), mtime)
+                    if preview_requested and (
+                        context["force_logs"][prefix] or context["last_log_state"][prefix] != log_state
+                    ):
+                        log_text = self._read_log_tail_text(path, max_lines=140)
+                except OSError as exc:
+                    if preview_requested:
+                        log_text = f"Failed to read logs: {exc}"
+            elif preview_requested:
+                log_text = "No logs available yet."
+
+            log_snapshots[prefix] = {
+                "names": names,
+                "selected": selected_name,
+                "auto_follow": auto_follow,
+                "log_text": log_text,
+                "log_state": log_state,
+            }
+
         server_count = len(self.manager.server_processes())
         client_count = len(self.manager.client_processes())
         port_open = self.manager.is_port_open()
-        
-        if server_count and client_count and port_open:
-            self.status_backend.set("Running")
-        elif server_count or client_count:
-            self.status_backend.set("Partial")
-        else:
-            self.status_backend.set("Stopped")
-            
-        self.status_port.set("Listening" if port_open else "Offline")
-        self.status_client.set(f"Active ({client_count})" if client_count else "Inactive")
-        
-        latest_result = self._extract_last_result()
-        if latest_result:
-            self.last_result.set(latest_result)
-        
-        err = self._extract_last_error()
-        self.last_error.set(err if err else "System Status: Normal")
 
-    def _populate_log_choices(self, initial: bool = False) -> None:
-        for prefix, combo, variable in (("client", self.client_log_combo, self.client_log_choice), ("server", self.server_log_combo, self.server_log_choice)):
-            if combo is None:
+        return {
+            "server_count": server_count,
+            "client_count": client_count,
+            "port_open": port_open,
+            "latest_result": self._extract_last_result(latest_logs),
+            "last_error": self._extract_last_error(latest_logs),
+            "logs": log_snapshots,
+        }
+
+    def _apply_refresh_snapshot(self, context: dict, snapshot: dict) -> None:
+        try:
+            server_count = snapshot["server_count"]
+            client_count = snapshot["client_count"]
+            port_open = snapshot["port_open"]
+
+            if server_count and client_count and port_open:
+                self.status_backend.set("Running")
+            elif server_count or client_count:
+                self.status_backend.set("Partial")
+            else:
+                self.status_backend.set("Stopped")
+
+            self.status_port.set("Listening" if port_open else "Offline")
+            self.status_client.set(f"Active ({client_count})" if client_count else "Inactive")
+
+            latest_result = snapshot["latest_result"]
+            if latest_result:
+                self.last_result.set(latest_result)
+
+            err = snapshot["last_error"]
+            self.last_error.set(err if err else "System Status: Normal")
+
+            for prefix in ("client", "server"):
+                combo = self.client_log_combo if prefix == "client" else self.server_log_combo
+                variable = self.client_log_choice if prefix == "client" else self.server_log_choice
+                log_snapshot = snapshot["logs"][prefix]
+                names = log_snapshot["names"]
+                if combo is not None:
+                    combo["values"] = names
+
+                current_value = variable.get()
+                requested_value = context["selected_logs"][prefix]
+                should_apply_selection = current_value == requested_value or current_value not in names
+
+                if should_apply_selection:
+                    variable.set(log_snapshot["selected"])
+                    self.log_auto_follow[prefix] = log_snapshot["auto_follow"]
+
+                if log_snapshot["log_text"] is not None and self.current_page == f"{prefix}_logs":
+                    if variable.get() == log_snapshot["selected"]:
+                        self._set_log_text(prefix, log_snapshot["log_text"])
+                        self.last_log_state[prefix] = log_snapshot["log_state"]
+        finally:
+            self._finish_refresh_cycle()
+
+    def _list_log_entries(self, prefix: str) -> list[dict[str, float | str]]:
+        entries: list[dict[str, float | str]] = []
+        for path in LOG_DIR.glob(f"{prefix}_*.log"):
+            try:
+                entries.append({"name": path.name, "mtime": path.stat().st_mtime})
+            except OSError:
                 continue
-            files = sorted(LOG_DIR.glob(f"{prefix}_*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
-            names = [f.name for f in files]
-            combo["values"] = names
+        entries.sort(key=lambda item: item["mtime"], reverse=True)
+        return entries
 
-            if not names:
-                variable.set("")
-                self.log_auto_follow[prefix] = True
-                continue
+    def _resolve_log_choice(self, names: list[str], current: str, auto_follow: bool, initial: bool) -> tuple[str, bool]:
+        if not names:
+            return "", True
 
-            current = variable.get()
-            latest = names[0]
-
-            if not current or current not in names:
-                variable.set(latest)
-                self.log_auto_follow[prefix] = True
-            elif self.log_auto_follow[prefix]:
-                if current != latest:
-                    variable.set(latest)
-            elif self._should_roll_to_latest_day(current, latest):
-                variable.set(latest)
-                self.log_auto_follow[prefix] = True
-            elif initial:
-                variable.set(current)
+        latest = names[0]
+        if not current or current not in names:
+            return latest, True
+        if auto_follow:
+            return latest, True
+        if self._should_roll_to_latest_day(current, latest):
+            return latest, True
+        if initial:
+            return current, auto_follow
+        return current, auto_follow
 
     def _selected_log_path(self, prefix: str) -> Path | None:
         name = self.client_log_choice.get() if prefix == "client" else self.server_log_choice.get()
@@ -567,31 +695,27 @@ class CapsWriterGUI:
         except OSError:
             return []
 
-    def _refresh_log_text(self, prefix: str, force: bool = False) -> None:
+    def _read_log_tail_text(self, path: Path, max_lines: int = 140) -> str:
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as fh:
+                return "".join(deque(fh, maxlen=max_lines))
+        except OSError as exc:
+            return f"Failed to read logs: {exc}"
+
+    def _set_log_text(self, prefix: str, content: str) -> None:
         text_widget = self.client_text if prefix == "client" else self.server_text
         if text_widget is None:
             return
-        path = self._selected_log_path(prefix)
-        if path is None:
-            return
-        mtime = path.stat().st_mtime
-        if not force and self.last_log_state[prefix] == (str(path), mtime):
-            return
-        try:
-            with path.open("r", encoding="utf-8", errors="replace") as fh:
-                tail = "".join(deque(fh, maxlen=140))
-        except OSError as exc:
-            tail = f"Failed to read logs: {exc}"
         text_widget.configure(state="normal")
         text_widget.delete("1.0", "end")
-        text_widget.insert("1.0", tail)
+        text_widget.insert("1.0", content)
         text_widget.see("end")
         text_widget.configure(state="disabled")
-        self.last_log_state[prefix] = (str(path), mtime)
 
-    def _extract_last_result(self) -> str:
+    def _extract_last_result(self, latest_logs: dict[str, Path | None] | None = None) -> str:
+        latest_logs = latest_logs or {prefix: self._latest_log(prefix) for prefix in ("client", "server")}
         for prefix in ("client", "server"):
-            path = self._latest_log(prefix)
+            path = latest_logs.get(prefix)
             if not path:
                 continue
             lines = self._read_log_tail_lines(path)
@@ -601,9 +725,10 @@ class CapsWriterGUI:
                         return line.split(marker, 1)[1].strip()
         return ""
 
-    def _extract_last_error(self) -> str:
+    def _extract_last_error(self, latest_logs: dict[str, Path | None] | None = None) -> str:
+        latest_logs = latest_logs or {prefix: self._latest_log(prefix) for prefix in ("client", "server")}
         for prefix in ("client", "server"):
-            path = self._latest_log(prefix)
+            path = latest_logs.get(prefix)
             if not path:
                 continue
             lines = self._read_log_tail_lines(path)
