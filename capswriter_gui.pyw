@@ -37,13 +37,15 @@ class LaunchTarget:
 
 
 class Theme:
-    BG = "#0F172A"
-    PANEL = "#111827"
-    CARD = "#1E293B"
-    CARD_ALT = "#334155"
-    TEXT = "#F8FAFC"
-    MUTED = "#94A3B8"
-    PRIMARY = "#3B82F6"
+    BG = "#020617"        # Deeper Dark
+    PANEL = "#0B0F19"     # Panel background
+    CARD = "#1E293B"      # Card background
+    CARD_HOVER = "#334155"
+    TEXT = "#F1F5F9"      # Clean white
+    MUTED = "#64748B"     # Slate 500
+    PRIMARY = "#3B82F6"   # Blue 500
+    SUCCESS = "#10B981"   # Emerald 500
+    ERROR = "#F43F5E"     # Rose 500
 
 
 class BackendManager:
@@ -280,87 +282,106 @@ class CapsWriterGUI:
         style.configure("Muted.TLabel", background=Theme.BG, foreground=Theme.MUTED)
         style.configure("CardTitle.TLabel", background=Theme.CARD, foreground=Theme.MUTED)
         style.configure("CardValue.TLabel", background=Theme.CARD, foreground=Theme.TEXT)
-        style.configure("Caps.TButton", background=Theme.CARD_ALT, foreground=Theme.TEXT, borderwidth=0)
+        style.configure("Caps.TButton", background=Theme.CARD_HOVER, foreground=Theme.TEXT, borderwidth=0, padding=(12, 4))
         style.map("Caps.TButton", background=[("active", Theme.PRIMARY)])
         style.configure("Caps.TNotebook", background=Theme.BG, borderwidth=0)
-        style.configure("Caps.TNotebook.Tab", background=Theme.CARD, foreground=Theme.MUTED, padding=(18, 10))
+        style.configure("Caps.TNotebook.Tab", background=Theme.CARD, foreground=Theme.MUTED, padding=(14, 6))
         style.map(
             "Caps.TNotebook.Tab",
-            background=[("selected", Theme.PRIMARY), ("active", Theme.CARD_ALT)],
+            background=[("selected", Theme.PRIMARY), ("active", Theme.CARD_HOVER)],
             foreground=[("selected", Theme.TEXT), ("active", Theme.TEXT)],
         )
-        style.configure("Caps.TCombobox", fieldbackground=Theme.CARD_ALT, background=Theme.CARD_ALT, foreground=Theme.TEXT)
+        style.configure("Caps.TCombobox", fieldbackground=Theme.CARD_HOVER, background=Theme.CARD_HOVER, foreground=Theme.TEXT)
 
     def _build_ui(self) -> None:
-        outer = ttk.Frame(self.root, style="Caps.TFrame", padding=18)
+        outer = ttk.Frame(self.root, style="Caps.TFrame", padding=14)
         outer.pack(fill="both", expand=True)
 
-        header = ttk.Frame(outer, style="Caps.TFrame")
-        header.pack(fill="x")
-        ttk.Label(header, text="CapsWriter Control Center", style="Caps.TLabel", font=("Segoe UI", 20, "bold")).pack(anchor="w")
-        header.pack_configure(pady=(0, 10))
+        # 1. Header Row (Title + Primary Actions)
+        header_row = ttk.Frame(outer, style="Caps.TFrame")
+        header_row.pack(fill="x", pady=(0, 10))
+        ttk.Label(header_row, text="CapsWriter", style="Caps.TLabel", font=("Segoe UI Semibold", 18)).pack(side="left")
+        
+        actions = ttk.Frame(header_row, style="Caps.TFrame")
+        actions.pack(side="right")
+        self._button(actions, "启动", lambda: self._run_async("正在启动后台…", self.manager.start_all)).pack(side="left", padx=2)
+        self._button(actions, "重启", lambda: self._run_async("正在重启后台…", self.manager.restart_all)).pack(side="left", padx=2)
+        self._button(actions, "停止", lambda: self._run_async("正在停止后台…", self.manager.stop_all)).pack(side="left", padx=2)
+        self._button(actions, "托盘", self.hide_to_tray).pack(side="left", padx=(12, 2))
 
-        actions = ttk.Frame(outer, style="Caps.TFrame")
-        actions.pack(fill="x", pady=(0, 12))
-        self._button(actions, "启动后台", lambda: self._run_async("正在启动后台…", self.manager.start_all)).pack(side="left")
-        self._button(actions, "重启后台", lambda: self._run_async("正在重启后台…", self.manager.restart_all)).pack(side="left", padx=8)
-        self._button(actions, "停止后台", lambda: self._run_async("正在停止后台…", self.manager.stop_all)).pack(side="left")
-        self._button(actions, "打开日志目录", lambda: os.startfile(str(LOG_DIR))).pack(side="left", padx=(20, 8))
-        self._button(actions, "打开安装目录", lambda: os.startfile(str(ROOT_DIR))).pack(side="left")
-        self._button(actions, "最小化到托盘", self.hide_to_tray).pack(side="right")
+        # 2. Status Row (3 Mini Cards)
+        status_row = ttk.Frame(outer, style="Caps.TFrame")
+        status_row.pack(fill="x", pady=(0, 12))
+        status_row.columnconfigure((0, 1, 2), weight=1)
+        self._card(status_row, "后台服务", self.status_backend).grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        self._card(status_row, "WS 6016", self.status_port).grid(row=0, column=1, sticky="nsew", padx=2)
+        self._card(status_row, "客户端", self.status_client).grid(row=0, column=2, sticky="nsew", padx=(4, 0))
 
-        cards = ttk.Frame(outer, style="Caps.TFrame")
-        cards.pack(fill="x", pady=(0, 12))
-        cards.columnconfigure((0, 1, 2), weight=1)
-        self._card(cards, "后台状态", self.status_backend).grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        self._card(cards, "WebSocket 6016", self.status_port).grid(row=0, column=1, sticky="nsew", padx=4)
-        self._card(cards, "客户端状态", self.status_client).grid(row=0, column=2, sticky="nsew", padx=(8, 0))
-
-        activity_card = ttk.Frame(outer, style="Card.TFrame", padding=14)
+        # 3. Recognition Area
+        activity_card = ttk.Frame(outer, style="Card.TFrame", padding=12)
         activity_card.pack(fill="x", pady=(0, 12))
-        ttk.Label(activity_card, text="最近识别", style="CardTitle.TLabel", font=("Segoe UI", 10)).pack(anchor="w")
-        ttk.Label(activity_card, textvariable=self.last_result, style="CardValue.TLabel", font=("Segoe UI", 12, "bold"), wraplength=980, justify="left").pack(anchor="w", pady=(6, 10))
-        ttk.Label(activity_card, text="最近异常", style="CardTitle.TLabel", font=("Segoe UI", 10)).pack(anchor="w")
-        ttk.Label(activity_card, textvariable=self.last_error, style="CardValue.TLabel", font=("Segoe UI", 10), wraplength=980, justify="left").pack(anchor="w", pady=(6, 0))
+        
+        res_row = ttk.Frame(activity_card, style="Card.TFrame")
+        res_row.pack(fill="x")
+        ttk.Label(res_row, text="最新识别", style="CardTitle.TLabel", font=("Segoe UI", 9, "bold")).pack(side="left")
+        ttk.Label(res_row, textvariable=self.last_result, style="CardValue.TLabel", font=("Segoe UI", 11, "bold"), wraplength=940, justify="left").pack(side="left", padx=(10, 0))
+        
+        err_row = ttk.Frame(activity_card, style="Card.TFrame")
+        err_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(err_row, text="系统反馈", style="CardTitle.TLabel", font=("Segoe UI", 9, "bold")).pack(side="left")
+        ttk.Label(err_row, textvariable=self.last_error, style="CardValue.TLabel", font=("Segoe UI", 9), wraplength=940, justify="left").pack(side="left", padx=(10, 0))
 
+        # 4. Logs Notebook
         notebook = ttk.Notebook(outer, style="Caps.TNotebook")
         notebook.pack(fill="both", expand=True)
-        client_frame = ttk.Frame(notebook, style="Caps.TFrame", padding=8)
-        server_frame = ttk.Frame(notebook, style="Caps.TFrame", padding=8)
+        client_frame = ttk.Frame(notebook, style="Caps.TFrame", padding=6)
+        server_frame = ttk.Frame(notebook, style="Caps.TFrame", padding=6)
         notebook.add(client_frame, text="客户端日志")
         notebook.add(server_frame, text="服务端日志")
         self.client_text = self._log_tab(client_frame, "client")
         self.server_text = self._log_tab(server_frame, "server")
 
+        # 5. Footer (Status Info)
         footer = ttk.Frame(outer, style="Caps.TFrame")
-        footer.pack(fill="x", pady=(12, 0))
-        ttk.Label(footer, textvariable=self.activity, style="Muted.TLabel", font=("Segoe UI", 10)).pack(side="left")
-        ttk.Label(footer, text="关闭窗口会最小化到托盘；托盘菜单可重新打开。", style="Muted.TLabel", font=("Segoe UI", 10)).pack(side="right")
+        footer.pack(fill="x", pady=(10, 0))
+        
+        info_left = ttk.Frame(footer, style="Caps.TFrame")
+        info_left.pack(side="left")
+        ttk.Label(info_left, textvariable=self.activity, style="Muted.TLabel", font=("Segoe UI", 9)).pack(side="left")
+        
+        info_right = ttk.Frame(footer, style="Caps.TFrame")
+        info_right.pack(side="right")
+        self._button(info_right, "日志目录", lambda: os.startfile(str(LOG_DIR))).pack(side="left", padx=2)
+        self._button(info_right, "安装目录", lambda: os.startfile(str(ROOT_DIR))).pack(side="left", padx=2)
 
     def _button(self, parent, text: str, command):
         return ttk.Button(parent, text=text, command=command, style="Caps.TButton")
 
     def _card(self, parent, title: str, variable: StringVar):
-        frame = ttk.Frame(parent, style="Card.TFrame", padding=16)
-        ttk.Label(frame, text=title, style="CardTitle.TLabel", font=("Segoe UI", 10)).pack(anchor="w")
-        ttk.Label(frame, textvariable=variable, style="CardValue.TLabel", font=("Segoe UI", 16, "bold")).pack(anchor="w", pady=(8, 0))
+        frame = ttk.Frame(parent, style="Card.TFrame", padding=(12, 10))
+        ttk.Label(frame, text=title, style="CardTitle.TLabel", font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        ttk.Label(frame, textvariable=variable, style="CardValue.TLabel", font=("Segoe UI Semibold", 13)).pack(anchor="w", pady=(4, 0))
         return frame
 
     def _log_tab(self, parent, prefix: str):
         controls = ttk.Frame(parent, style="Caps.TFrame")
-        controls.pack(fill="x", pady=(0, 8))
+        controls.pack(fill="x", pady=(0, 6))
+        
         choice = self.client_log_choice if prefix == "client" else self.server_log_choice
-        combo = ttk.Combobox(controls, textvariable=choice, state="readonly", width=48, style="Caps.TCombobox")
+        combo = ttk.Combobox(controls, textvariable=choice, state="readonly", width=42, style="Caps.TCombobox")
         combo.pack(side="left", fill="x", expand=True)
         combo.bind("<<ComboboxSelected>>", lambda _event, p=prefix: self._on_log_selected(p))
         if prefix == "client":
             self.client_log_combo = combo
         else:
             self.server_log_combo = combo
-        self._button(controls, "刷新", lambda p=prefix: self._refresh_log_text(p, force=True)).pack(side="left", padx=8)
-        self._button(controls, "打开文件", lambda p=prefix: self._open_selected_log(p)).pack(side="left")
+            
+        self._button(controls, "刷新", lambda p=prefix: self._refresh_log_text(p, force=True)).pack(side="left", padx=4)
+        self._button(controls, "打开日志", lambda p=prefix: self._open_selected_log(p)).pack(side="left")
 
-        text = scrolledtext.ScrolledText(parent, wrap="word", bg=Theme.PANEL, fg=Theme.TEXT, insertbackground=Theme.TEXT, relief="flat", borderwidth=0, font=("Consolas", 10), padx=12, pady=12)
+        text = scrolledtext.ScrolledText(parent, wrap="word", bg=Theme.PANEL, fg=Theme.TEXT, 
+                                        insertbackground=Theme.TEXT, relief="flat", borderwidth=0, 
+                                        font=("Consolas", 10), padx=10, pady=10)
         text.pack(fill="both", expand=True)
         text.configure(state="disabled")
         return text
