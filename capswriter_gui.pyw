@@ -226,8 +226,8 @@ class CapsWriterGUI:
 
         self.root = Tk()
         self.root.title("CapsWriter Offline Control Center")
-        self.root.geometry("1040x720")
-        self.root.minsize(920, 620)
+        self.root.geometry("940x640")
+        self.root.minsize(860, 560)
         self.root.configure(bg=Theme.BG)
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         self.root.bind("<Unmap>", self._on_unmap)
@@ -317,7 +317,7 @@ class CapsWriterGUI:
 
     def _build_ui(self) -> None:
         # 1. Main Layout: Sidebar + Content
-        self.sidebar = ttk.Frame(self.root, style="Sidebar.TFrame", width=210)
+        self.sidebar = ttk.Frame(self.root, style="Sidebar.TFrame", width=188)
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
 
@@ -379,12 +379,12 @@ class CapsWriterGUI:
         elif page_id == "server_logs": self.btn_server_logs.state(["selected"])
 
     def _create_overview_page(self) -> ttk.Frame:
-        page = ttk.Frame(self.main_container, style="Main.TFrame", padding=22)
+        page = ttk.Frame(self.main_container, style="Main.TFrame", padding=18)
         
         # Header
         header = ttk.Frame(page, style="Main.TFrame")
-        header.pack(fill="x", pady=(0, 20))
-        ttk.Label(header, text="Dashboard Overview", style="Caps.TLabel", font=("Segoe UI Semibold", 20)).pack(side="left")
+        header.pack(fill="x", pady=(0, 16))
+        ttk.Label(header, text="Dashboard Overview", style="Caps.TLabel", font=("Segoe UI Semibold", 18)).pack(side="left")
         
         actions = ttk.Frame(header, style="Main.TFrame")
         actions.pack(side="right")
@@ -394,7 +394,7 @@ class CapsWriterGUI:
 
         # Status Grid
         status_row = ttk.Frame(page, style="Main.TFrame")
-        status_row.pack(fill="x", pady=(0, 18))
+        status_row.pack(fill="x", pady=(0, 14))
         status_row.columnconfigure((0, 1, 2), weight=1, uniform="status")
         
         self._status_card(status_row, "Service Status", self.status_backend, 0)
@@ -402,12 +402,12 @@ class CapsWriterGUI:
         self._status_card(status_row, "Active Client", self.status_client, 2)
 
         # Result Area
-        result_card = ttk.Frame(page, style="Card.TFrame", padding=18)
+        result_card = ttk.Frame(page, style="Card.TFrame", padding=16)
         result_card.pack(fill="both", expand=True)
         
         ttk.Label(result_card, text="LATEST RECOGNITION", style="CardTitle.TLabel", font=("Segoe UI", 9, "bold")).pack(anchor="w")
-        res_label = ttk.Label(result_card, textvariable=self.last_result, style="CardValue.TLabel", font=("Segoe UI Semibold", 15), wraplength=680, justify="left")
-        res_label.pack(anchor="w", pady=(12, 22), fill="x")
+        res_label = ttk.Label(result_card, textvariable=self.last_result, style="CardValue.TLabel", font=("Segoe UI Semibold", 14), wraplength=600, justify="left")
+        res_label.pack(anchor="w", pady=(10, 18), fill="x")
         
         ttk.Frame(result_card, style="Separator.TFrame", height=1).pack(fill="x", pady=(0, 20))
         
@@ -418,24 +418,24 @@ class CapsWriterGUI:
 
         # Footer Status
         footer = ttk.Frame(page, style="Main.TFrame")
-        footer.pack(fill="x", pady=(20, 0))
+        footer.pack(fill="x", pady=(14, 0))
         ttk.Label(footer, textvariable=self.activity, style="Muted.TLabel", font=("Segoe UI", 9)).pack(side="left")
         
         return page
 
     def _create_logs_page(self, prefix: str) -> ttk.Frame:
-        page = ttk.Frame(self.main_container, style="Main.TFrame", padding=22)
+        page = ttk.Frame(self.main_container, style="Main.TFrame", padding=18)
         
         header = ttk.Frame(page, style="Main.TFrame")
-        header.pack(fill="x", pady=(0, 16))
+        header.pack(fill="x", pady=(0, 12))
         title = "Client Process Logs" if prefix == "client" else "Server Process Logs"
-        ttk.Label(header, text=title, style="Caps.TLabel", font=("Segoe UI Semibold", 20)).pack(side="left")
+        ttk.Label(header, text=title, style="Caps.TLabel", font=("Segoe UI Semibold", 18)).pack(side="left")
         
         controls = ttk.Frame(page, style="Main.TFrame")
-        controls.pack(fill="x", pady=(0, 12))
+        controls.pack(fill="x", pady=(0, 8))
         
         choice = self.client_log_choice if prefix == "client" else self.server_log_choice
-        combo = ttk.Combobox(controls, textvariable=choice, state="readonly", width=45, style="Caps.TCombobox")
+        combo = ttk.Combobox(controls, textvariable=choice, state="readonly", width=38, style="Caps.TCombobox")
         combo.pack(side="left", padx=(0, 10))
         combo.bind("<<ComboboxSelected>>", lambda _event, p=prefix: self._on_log_selected(p))
         if prefix == "client":
@@ -447,13 +447,23 @@ class CapsWriterGUI:
         ttk.Button(controls, text="Open File", style="Caps.TButton", command=lambda p=prefix: self._open_selected_log(p)).pack(side="left", padx=5)
 
         text_container = ttk.Frame(page, style="Card.TFrame", padding=1)
-        text_container.pack(fill="both", expand=True)
+        text_container.pack(fill="x")
         
         text = scrolledtext.ScrolledText(text_container, wrap="word", bg=Theme.BG, fg=Theme.TEXT, 
                                         insertbackground=Theme.TEXT, relief="flat", borderwidth=0, 
-                                        font=("Consolas", 10), padx=12, pady=12)
+                                        font=("Consolas", 10), padx=10, pady=10, height=18)
         text.pack(fill="both", expand=True)
         text.configure(state="disabled")
+
+        footer = ttk.Frame(page, style="Main.TFrame")
+        footer.pack(fill="x", pady=(10, 0))
+        ttk.Label(
+            footer,
+            text="预览最近日志；需要完整内容时点 Open File。",
+            style="Muted.TLabel",
+            font=("Segoe UI", 9),
+        ).pack(side="left")
+        ttk.Label(footer, textvariable=self.activity, style="Muted.TLabel", font=("Segoe UI", 9)).pack(side="right")
         
         if prefix == "client": self.client_text = text
         else: self.server_text = text
@@ -564,7 +574,7 @@ class CapsWriterGUI:
             return
         try:
             with path.open("r", encoding="utf-8", errors="replace") as fh:
-                tail = "".join(deque(fh, maxlen=400))
+                tail = "".join(deque(fh, maxlen=220))
         except OSError as exc:
             tail = f"Failed to read logs: {exc}"
         text_widget.configure(state="normal")
