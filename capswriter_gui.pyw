@@ -298,12 +298,7 @@ class CapsWriterGUI:
         header = ttk.Frame(outer, style="Caps.TFrame")
         header.pack(fill="x")
         ttk.Label(header, text="CapsWriter Control Center", style="Caps.TLabel", font=("Segoe UI", 20, "bold")).pack(anchor="w")
-        ttk.Label(
-            header,
-            text="参考 GlacialTool_UniversalV 的深色卡片风格，提供托盘驻留、后台控制和日志查看。",
-            style="Muted.TLabel",
-            font=("Segoe UI", 10),
-        ).pack(anchor="w", pady=(4, 10))
+        header.pack_configure(pady=(0, 10))
 
         actions = ttk.Frame(outer, style="Caps.TFrame")
         actions.pack(fill="x", pady=(0, 12))
