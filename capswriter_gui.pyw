@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import ctypes
+import re
 from collections import deque
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -247,6 +248,7 @@ class CapsWriterGUI:
         self.client_text: scrolledtext.ScrolledText | None = None
         self.server_text: scrolledtext.ScrolledText | None = None
         self.last_log_state: dict[str, tuple[str, float]] = {"client": ("", 0.0), "server": ("", 0.0)}
+        self.log_auto_follow: dict[str, bool] = {"client": True, "server": True}
 
         self.tray_icon: pystray.Icon | None = None
         self.tray_thread: threading.Thread | None = None
@@ -355,7 +357,7 @@ class CapsWriterGUI:
         choice = self.client_log_choice if prefix == "client" else self.server_log_choice
         combo = ttk.Combobox(controls, textvariable=choice, state="readonly", width=48, style="Caps.TCombobox")
         combo.pack(side="left", fill="x", expand=True)
-        combo.bind("<<ComboboxSelected>>", lambda _event, p=prefix: self._refresh_log_text(p, force=True))
+        combo.bind("<<ComboboxSelected>>", lambda _event, p=prefix: self._on_log_selected(p))
         if prefix == "client":
             self.client_log_combo = combo
         else:
@@ -367,6 +369,23 @@ class CapsWriterGUI:
         text.pack(fill="both", expand=True)
         text.configure(state="disabled")
         return text
+
+    @staticmethod
+    def _log_day_token(file_name: str) -> str:
+        match = re.match(r"^(?:client|server)_(\d{8})\.log$", file_name)
+        return match.group(1) if match else ""
+
+    def _should_roll_to_latest_day(self, current_name: str, latest_name: str) -> bool:
+        current_day = self._log_day_token(current_name)
+        latest_day = self._log_day_token(latest_name)
+        return bool(current_day and latest_day and latest_day > current_day)
+
+    def _on_log_selected(self, prefix: str) -> None:
+        variable = self.client_log_choice if prefix == "client" else self.server_log_choice
+        selected = variable.get()
+        latest = self._latest_log(prefix)
+        self.log_auto_follow[prefix] = bool(latest and selected == latest.name)
+        self._refresh_log_text(prefix, force=True)
 
     def _schedule_refresh(self) -> None:
         if self.control_stop.is_set():
@@ -401,10 +420,24 @@ class CapsWriterGUI:
             files = sorted(LOG_DIR.glob(f"{prefix}_*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
             names = [f.name for f in files]
             combo["values"] = names
+
+            if not names:
+                variable.set("")
+                self.log_auto_follow[prefix] = True
+                continue
+
             current = variable.get()
+            latest = names[0]
+
             if not current or current not in names:
-                if names:
-                    variable.set(names[0])
+                variable.set(latest)
+                self.log_auto_follow[prefix] = True
+            elif self.log_auto_follow[prefix]:
+                if current != latest:
+                    variable.set(latest)
+            elif self._should_roll_to_latest_day(current, latest):
+                variable.set(latest)
+                self.log_auto_follow[prefix] = True
             elif initial:
                 variable.set(current)
 
