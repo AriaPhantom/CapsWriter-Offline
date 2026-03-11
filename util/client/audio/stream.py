@@ -43,6 +43,7 @@ class AudioStreamManager:
     
     SAMPLE_RATE = 48000
     BLOCK_DURATION = 0.05  # 50ms
+    DEVICE_POLL_INTERVAL = 1.5
     
     def __init__(self, state: 'ClientState'):
         """
@@ -57,6 +58,56 @@ class AudioStreamManager:
         self._running = False  # 标志是否应该运行
         self._reopen_lock = threading.Lock()
         self._reopen_pending = False
+        self._device_watch_stop = threading.Event()
+        self._device_watch_thread: Optional[threading.Thread] = None
+        self._last_default_input = self._get_default_input_signature()
+
+    def _get_default_input_signature(self):
+        """返回当前默认输入设备签名，用于监听系统默认麦克风变化。"""
+        try:
+            default_device = sd.default.device
+            device_index = None
+            if isinstance(default_device, (list, tuple)) and default_device:
+                device_index = default_device[0]
+            elif isinstance(default_device, int):
+                device_index = default_device
+
+            if device_index in (-1, None):
+                return None
+
+            device = sd.query_devices(device_index)
+            return (
+                int(device_index),
+                device.get('name', ''),
+                int(device.get('max_input_channels', 0)),
+            )
+        except Exception:
+            return None
+
+    def _ensure_device_watcher(self) -> None:
+        if self._device_watch_thread and self._device_watch_thread.is_alive():
+            return
+
+        self._device_watch_stop.clear()
+
+        def worker() -> None:
+            while not self._device_watch_stop.wait(self.DEVICE_POLL_INTERVAL):
+                if lifecycle.is_shutting_down:
+                    return
+
+                current_default = self._get_default_input_signature()
+                previous_default = self._last_default_input
+                if current_default == previous_default:
+                    continue
+
+                self._last_default_input = current_default
+                logger.info(
+                    f"检测到默认输入设备变化: {previous_default} -> {current_default}，准备重启音频流"
+                )
+                self._schedule_reopen()
+
+        self._device_watch_thread = threading.Thread(target=worker, daemon=True)
+        self._device_watch_thread.start()
 
     def _resolve_input_device(self):
         """解析输入设备；默认设备不可用时，回退到第一个可用输入设备。"""
@@ -178,11 +229,14 @@ class AudioStreamManager:
         Returns:
             创建的音频输入流，如果失败返回 None
         """
+        self._ensure_device_watcher()
+
         # 检测音频设备
         try:
             self._device_index, device = self._resolve_input_device()
             self._channels = min(2, device['max_input_channels'])
             device_name = device.get('name', '未知设备')
+            self._last_default_input = self._get_default_input_signature()
             console.print(
                 f'使用输入设备：[italic]{device_name}，声道数：{self._channels}',
                 end='\n\n'
@@ -238,6 +292,11 @@ class AudioStreamManager:
                 logger.debug(f"关闭音频流时发生错误: {e}")
             finally:
                 self.state.stream = None
+
+    def shutdown(self) -> None:
+        """彻底停止音频流管理，包括默认设备监听线程。"""
+        self._device_watch_stop.set()
+        self.close()
     
     def reopen(self) -> Optional[sd.InputStream]:
         """

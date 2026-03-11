@@ -86,7 +86,7 @@ LLM 角色既可以使用 Ollama 运行的本地模型，又可以用 API 访问
 5.  **开始录音**：按住 `CapsLock键` 或 `鼠标侧键X2` 就可以说话了！
 
 > **可选：GUI 控制中心（源码版）**  
-> 运行 `pythonw capswriter_gui.pyw` 可以用一个托盘面板统一管理服务端/客户端、查看日志、重启后台，并避免常驻黑窗口；新版界面默认采用侧边栏导航、仪表盘总览和独立日志页布局，并把默认窗口尺寸、日志预览高度都收紧到更适合日常快速查看的大小。GUI 轮询也已改轻量，不再每次刷新都扫描整份日志文件。 Status scans, log enumeration, and log-tail preview now run on a background thread so the Tk UI thread stays responsive. Port checks read OS listening sockets to avoid triggering websocket handshake errors. System Status ignores benign websocket handshake failures.
+> 运行 `pythonw capswriter_gui.pyw` 可以用一个托盘面板统一管理服务端/客户端、查看日志、重启后台，并避免常驻黑窗口；新版界面默认采用侧边栏导航、仪表盘总览和独立日志页布局，并把默认窗口尺寸、日志预览高度都收紧到更适合日常快速查看的大小。GUI 轮询也已改轻量，不再每次刷新都扫描整份日志文件。 Status scans, log enumeration, and log-tail preview now run on a background thread so the Tk UI thread stays responsive. Port checks read OS listening sockets to avoid triggering websocket handshake errors. System Status ignores benign websocket handshake failures. The client now polls the Windows default input device and silently reopens the audio stream when the default microphone changes, which helps Bluetooth headset connect/disconnect switching.
 
 
 ## 🎤 模型说明
