@@ -114,11 +114,19 @@ class BackendManager:
 
     def is_port_open(self, host: str = "127.0.0.1", port: int = PORT) -> bool:
         try:
-            target_host = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
-            with socket.create_connection((target_host, port), timeout=0.15):
-                return True
-        except OSError:
+            for conn in psutil.net_connections(kind="tcp"):
+                try:
+                    if not conn.laddr:
+                        continue
+                    if conn.laddr.port != port:
+                        continue
+                    if conn.status == psutil.CONN_LISTEN:
+                        return True
+                except (AttributeError, OSError):
+                    continue
+        except (psutil.AccessDenied, psutil.NoSuchProcess, OSError):
             return False
+        return False
 
     def _spawn_hidden(self, target: LaunchTarget) -> None:
         subprocess.Popen(
@@ -735,7 +743,10 @@ class CapsWriterGUI:
             for line in reversed(lines):
                 if " - ERROR - " in line:
                     # Clean up error line for display
-                    return line.split(" - ERROR - ", 1)[1].strip()
+                    err = line.split(" - ERROR - ", 1)[1].strip()
+                    if "opening handshake failed" in err:
+                        continue
+                    return err
         return ""
 
     def _latest_log(self, prefix: str) -> Path | None:
