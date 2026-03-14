@@ -61,6 +61,7 @@ class AudioStreamManager:
         self._device_watch_stop = threading.Event()
         self._device_watch_thread: Optional[threading.Thread] = None
         self._last_default_input = self._get_default_input_signature()
+        self._last_device_snapshot = self._get_input_device_snapshot()
 
     def _get_default_input_signature(self):
         """返回当前默认输入设备签名，用于监听系统默认麦克风变化。"""
@@ -84,6 +85,25 @@ class AudioStreamManager:
         except Exception:
             return None
 
+    def _get_input_device_snapshot(self):
+        """返回当前输入设备列表快照，用于监听设备热插拔变化。"""
+        try:
+            devices = sd.query_devices()
+        except Exception:
+            return None
+
+        snapshot = []
+        for index, device in enumerate(devices):
+            if device.get('max_input_channels', 0) > 0:
+                snapshot.append(
+                    (
+                        int(index),
+                        device.get('name', ''),
+                        int(device.get('max_input_channels', 0)),
+                    )
+                )
+        return tuple(snapshot)
+
     def _ensure_device_watcher(self) -> None:
         if self._device_watch_thread and self._device_watch_thread.is_alive():
             return
@@ -97,12 +117,22 @@ class AudioStreamManager:
 
                 current_default = self._get_default_input_signature()
                 previous_default = self._last_default_input
-                if current_default == previous_default:
+                current_snapshot = self._get_input_device_snapshot()
+                snapshot_changed = current_snapshot != self._last_device_snapshot
+                default_changed = current_default != previous_default
+                if not default_changed and not snapshot_changed:
                     continue
 
                 self._last_default_input = current_default
+                self._last_device_snapshot = current_snapshot
+                reasons = []
+                if default_changed:
+                    reasons.append("默认输入设备变化")
+                if snapshot_changed:
+                    reasons.append("输入设备列表变化")
+                reason_text = " / ".join(reasons)
                 logger.info(
-                    f"检测到默认输入设备变化: {previous_default} -> {current_default}，准备重启音频流"
+                    f"检测到{reason_text}: {previous_default} -> {current_default}，准备重启音频流"
                 )
                 self._schedule_reopen()
 
@@ -237,6 +267,7 @@ class AudioStreamManager:
             self._channels = min(2, device['max_input_channels'])
             device_name = device.get('name', '未知设备')
             self._last_default_input = self._get_default_input_signature()
+            self._last_device_snapshot = self._get_input_device_snapshot()
             console.print(
                 f'使用输入设备：[italic]{device_name}，声道数：{self._channels}',
                 end='\n\n'
