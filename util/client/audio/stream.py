@@ -112,9 +112,27 @@ class AudioStreamManager:
         except Exception:
             return None, None
 
-        preferred_tokens = ('bluetooth', 'headset', 'airpods', 'earbuds', 'buds')
-        mic_tokens = ('麦克风', 'microphone', 'mic')
-        fallback_tokens = ('realtek', 'usb')
+        preferred_tokens = (
+            'bluetooth',
+            'bt',
+            'bth',
+            'wireless',
+            'headset',
+            'hands-free',
+            'handsfree',
+            'ag audio',
+            'hfp',
+            'hsp',
+            'airpods',
+            'earbuds',
+            'buds',
+            '蓝牙',
+            '耳机',
+            '耳麦',
+            '耳塞',
+        )
+        mic_tokens = ('麦克风', '话筒', 'microphone', 'mic')
+        fallback_tokens = ('realtek', 'usb', 'builtin', 'built-in', 'internal')
         virtual_tokens = (
             'sonic studio',
             'virtual',
@@ -134,22 +152,28 @@ class AudioStreamManager:
                 name = candidate.get('name', '未知设备')
                 lower_name = name.lower()
                 score = 0
+                preferred_hit = any(token in lower_name for token in preferred_tokens)
+                mic_hit = any(token in lower_name for token in mic_tokens)
+                fallback_hit = any(token in lower_name for token in fallback_tokens)
+                virtual_hit = any(token in lower_name for token in virtual_tokens)
 
-                if any(token in lower_name for token in preferred_tokens):
-                    score -= 30
-                if any(token in lower_name for token in mic_tokens):
-                    score -= 15
-                if any(token in lower_name for token in fallback_tokens):
-                    score -= 5
-                if any(token in lower_name for token in virtual_tokens):
-                    score += 100
+                if preferred_hit:
+                    score -= 45
+                if mic_hit:
+                    score -= 12
+                if fallback_hit:
+                    score += 8
+                if virtual_hit:
+                    score += 120
 
-                candidates.append((score, index, candidate))
+                candidates.append((score, index, candidate, preferred_hit))
 
         if candidates:
-            _, index, candidate = sorted(candidates, key=lambda item: (item[0], item[1]))[0]
-            return index, candidate
-        return None, None
+            score, index, candidate, preferred_hit = sorted(
+                candidates, key=lambda item: (item[0], item[1])
+            )[0]
+            return index, candidate, score, preferred_hit
+        return None, None, None, False
 
     def _ensure_device_watcher(self) -> None:
         if self._device_watch_thread and self._device_watch_thread.is_alive():
@@ -167,21 +191,43 @@ class AudioStreamManager:
                 current_snapshot = self._get_input_device_snapshot()
                 snapshot_changed = current_snapshot != self._last_device_snapshot
                 default_changed = current_default != previous_default
-                if not default_changed and not snapshot_changed:
+                preferred_index, preferred_device, preferred_score, preferred_hit = (
+                    self._pick_preferred_input_device()
+                )
+
+                current_missing = False
+                if current_snapshot is not None and self._device_index is not None:
+                    current_missing = all(
+                        item[0] != self._device_index for item in current_snapshot
+                    )
+
+                preferred_switch = (
+                    preferred_hit
+                    and preferred_index is not None
+                    and preferred_index != self._device_index
+                )
+
+                if default_changed:
+                    self._last_default_input = current_default
+                if snapshot_changed:
+                    self._last_device_snapshot = current_snapshot
+
+                if not default_changed and not preferred_switch and not current_missing:
                     continue
 
-                self._last_default_input = current_default
-                self._last_device_snapshot = current_snapshot
                 if default_changed:
                     self._forced_device_index = None
-                elif snapshot_changed:
-                    preferred_index, _ = self._pick_preferred_input_device()
+                else:
                     self._forced_device_index = preferred_index
+
                 reasons = []
                 if default_changed:
                     reasons.append("默认输入设备变化")
-                if snapshot_changed:
-                    reasons.append("输入设备列表变化")
+                if preferred_switch and preferred_device is not None:
+                    preferred_name = preferred_device.get('name', '未知设备')
+                    reasons.append(f"检测到耳机/蓝牙输入设备: {preferred_name}")
+                if current_missing:
+                    reasons.append("当前输入设备已移除")
                 reason_text = " / ".join(reasons)
                 logger.info(
                     f"检测到{reason_text}: {previous_default} -> {current_default}，准备重启音频流"
@@ -211,7 +257,7 @@ class AudioStreamManager:
                     device_index = None
             return device_index, device
         except sd.PortAudioError as default_error:
-            index, candidate = self._pick_preferred_input_device()
+            index, candidate, _, _ = self._pick_preferred_input_device()
             if candidate is not None:
                 logger.warning(
                     f"默认输入设备不可用，回退到输入设备 #{index}: {candidate.get('name', '未知设备')}"
