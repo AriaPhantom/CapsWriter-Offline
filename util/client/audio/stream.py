@@ -44,6 +44,7 @@ class AudioStreamManager:
     SAMPLE_RATE = 48000
     BLOCK_DURATION = 0.05  # 50ms
     DEVICE_POLL_INTERVAL = 1.5
+    PREFERRED_RETRY_INTERVAL = 8.0
     
     def __init__(self, state: 'ClientState'):
         """
@@ -63,6 +64,7 @@ class AudioStreamManager:
         self._last_default_input = self._get_default_input_signature()
         self._last_device_snapshot = self._get_input_device_snapshot()
         self._forced_device_index: Optional[int] = None
+        self._preferred_retry_after = 0.0
 
     def _get_default_input_signature(self):
         """返回当前默认输入设备签名，用于监听系统默认麦克风变化。"""
@@ -105,12 +107,12 @@ class AudioStreamManager:
                 )
         return tuple(snapshot)
 
-    def _pick_preferred_input_device(self):
-        """根据名称优先级选择输入设备（优先蓝牙/耳机）。"""
+    def _rank_input_devices(self):
+        """按名称优先级排序输入设备（优先蓝牙/耳机）。"""
         try:
             devices = sd.query_devices()
         except Exception:
-            return None, None
+            return []
 
         preferred_tokens = (
             'bluetooth',
@@ -168,10 +170,13 @@ class AudioStreamManager:
 
                 candidates.append((score, index, candidate, preferred_hit))
 
+        return sorted(candidates, key=lambda item: (item[0], item[1]))
+
+    def _pick_preferred_input_device(self):
+        """根据名称优先级选择输入设备（优先蓝牙/耳机）。"""
+        candidates = self._rank_input_devices()
         if candidates:
-            score, index, candidate, preferred_hit = sorted(
-                candidates, key=lambda item: (item[0], item[1])
-            )[0]
+            score, index, candidate, preferred_hit = candidates[0]
             return index, candidate, score, preferred_hit
         return None, None, None, False
 
@@ -206,6 +211,8 @@ class AudioStreamManager:
                     and preferred_index is not None
                     and preferred_index != self._device_index
                 )
+                if preferred_switch and time.time() < self._preferred_retry_after:
+                    preferred_switch = False
 
                 if default_changed:
                     self._last_default_input = current_default
@@ -336,54 +343,96 @@ class AudioStreamManager:
 
         # 检测音频设备
         try:
-            self._device_index, device = self._resolve_input_device()
-            self._channels = min(2, device['max_input_channels'])
-            device_name = device.get('name', '未知设备')
-            self._last_default_input = self._get_default_input_signature()
-            self._last_device_snapshot = self._get_input_device_snapshot()
-            console.print(
-                f'使用输入设备：[italic]{device_name}，声道数：{self._channels}',
-                end='\n\n'
-            )
-            logger.info(f"找到音频设备: {device_name}, 声道数: {self._channels}")
-        except UnicodeDecodeError:
-            console.print(
-                "由于编码问题，暂时无法获得麦克风设备名字",
-                end='\n\n',
-                style='bright_red'
-            )
-            logger.warning("无法获取音频设备名称（编码问题）")
+            resolved_index, resolved_device = self._resolve_input_device()
         except sd.PortAudioError:
             console.print("没有找到麦克风设备", end='\n\n', style='bright_red')
             logger.error("未找到麦克风设备")
             self.state.stream = None
             self._running = False
             return None
-        
-        # 创建音频流
-        try:
-            stream = sd.InputStream(
-                samplerate=self.SAMPLE_RATE,
-                blocksize=int(self.BLOCK_DURATION * self.SAMPLE_RATE),
-                device=self._device_index,
-                dtype="float32",
-                channels=self._channels,
-                callback=self._audio_callback,
-                finished_callback=self._on_stream_finished,
-            )
-            stream.start()
-            
+
+        self._last_default_input = self._get_default_input_signature()
+        self._last_device_snapshot = self._get_input_device_snapshot()
+
+        ranked_candidates = self._rank_input_devices()
+        preferred_index = ranked_candidates[0][1] if ranked_candidates else None
+        preferred_hit = ranked_candidates[0][3] if ranked_candidates else False
+
+        candidates = []
+        if resolved_device is not None:
+            candidates.append((resolved_index, resolved_device, "首选"))
+
+        for _, index, candidate, _ in ranked_candidates:
+            if resolved_device is not None and index == resolved_index:
+                continue
+            candidates.append((index, candidate, "备选"))
+
+        last_error = None
+        for index, device, source in candidates:
+            if device is None:
+                continue
+            self._device_index = index
+            self._channels = min(2, device['max_input_channels'])
+            device_name = device.get('name', '未知设备')
+
+            try:
+                stream = sd.InputStream(
+                    samplerate=self.SAMPLE_RATE,
+                    blocksize=int(self.BLOCK_DURATION * self.SAMPLE_RATE),
+                    device=self._device_index,
+                    dtype="float32",
+                    channels=self._channels,
+                    callback=self._audio_callback,
+                    finished_callback=self._on_stream_finished,
+                )
+                stream.start()
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    f"打开输入设备失败（{source}）：{device_name} -> {e}"
+                )
+                continue
+
             self.state.stream = stream
             self._running = True
+            try:
+                console.print(
+                    f'使用输入设备：[italic]{device_name}，声道数：{self._channels}',
+                    end='\n\n'
+                )
+            except UnicodeDecodeError:
+                console.print(
+                    "由于编码问题，暂时无法获得麦克风设备名字",
+                    end='\n\n',
+                    style='bright_red'
+                )
+                logger.warning("无法获取音频设备名称（编码问题）")
+
+            logger.info(f"找到音频设备: {device_name}, 声道数: {self._channels}")
             logger.debug(
                 f"音频流已启动: 采样率={self.SAMPLE_RATE}, "
                 f"块大小={int(self.BLOCK_DURATION * self.SAMPLE_RATE)}"
             )
+            if preferred_hit and preferred_index is not None:
+                if self._device_index == preferred_index:
+                    self._preferred_retry_after = 0.0
+                else:
+                    self._preferred_retry_after = (
+                        time.time() + self.PREFERRED_RETRY_INTERVAL
+                    )
+                    logger.warning(
+                        f"首选输入设备暂不可用，已回退到 {device_name}，"
+                        f"{self.PREFERRED_RETRY_INTERVAL:.0f}s 后再尝试切换"
+                    )
             return stream
-            
-        except Exception as e:
-            logger.error(f"创建音频流失败: {e}", exc_info=True)
-            return None
+
+        if last_error is not None:
+            logger.error(f"创建音频流失败: {last_error}", exc_info=True)
+        else:
+            logger.error("未找到可用的麦克风设备")
+        self.state.stream = None
+        self._running = False
+        return None
     
     def close(self) -> None:
         """关闭音频流"""
