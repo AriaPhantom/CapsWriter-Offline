@@ -62,6 +62,7 @@ class AudioStreamManager:
         self._device_watch_thread: Optional[threading.Thread] = None
         self._last_default_input = self._get_default_input_signature()
         self._last_device_snapshot = self._get_input_device_snapshot()
+        self._forced_device_index: Optional[int] = None
 
     def _get_default_input_signature(self):
         """返回当前默认输入设备签名，用于监听系统默认麦克风变化。"""
@@ -104,6 +105,52 @@ class AudioStreamManager:
                 )
         return tuple(snapshot)
 
+    def _pick_preferred_input_device(self):
+        """根据名称优先级选择输入设备（优先蓝牙/耳机）。"""
+        try:
+            devices = sd.query_devices()
+        except Exception:
+            return None, None
+
+        preferred_tokens = ('bluetooth', 'headset', 'airpods', 'earbuds', 'buds')
+        mic_tokens = ('麦克风', 'microphone', 'mic')
+        fallback_tokens = ('realtek', 'usb')
+        virtual_tokens = (
+            'sonic studio',
+            'virtual',
+            'vad',
+            'wave speaker',
+            'stereo mix',
+            'what u hear',
+            'loopback',
+            'mix',
+            'output',
+            'speaker',
+        )
+
+        candidates = []
+        for index, candidate in enumerate(devices):
+            if candidate.get('max_input_channels', 0) > 0:
+                name = candidate.get('name', '未知设备')
+                lower_name = name.lower()
+                score = 0
+
+                if any(token in lower_name for token in preferred_tokens):
+                    score -= 30
+                if any(token in lower_name for token in mic_tokens):
+                    score -= 15
+                if any(token in lower_name for token in fallback_tokens):
+                    score -= 5
+                if any(token in lower_name for token in virtual_tokens):
+                    score += 100
+
+                candidates.append((score, index, candidate))
+
+        if candidates:
+            _, index, candidate = sorted(candidates, key=lambda item: (item[0], item[1]))[0]
+            return index, candidate
+        return None, None
+
     def _ensure_device_watcher(self) -> None:
         if self._device_watch_thread and self._device_watch_thread.is_alive():
             return
@@ -125,6 +172,11 @@ class AudioStreamManager:
 
                 self._last_default_input = current_default
                 self._last_device_snapshot = current_snapshot
+                if default_changed:
+                    self._forced_device_index = None
+                elif snapshot_changed:
+                    preferred_index, _ = self._pick_preferred_input_device()
+                    self._forced_device_index = preferred_index
                 reasons = []
                 if default_changed:
                     reasons.append("默认输入设备变化")
@@ -142,6 +194,14 @@ class AudioStreamManager:
     def _resolve_input_device(self):
         """解析输入设备；默认设备不可用时，回退到第一个可用输入设备。"""
         try:
+            if self._forced_device_index is not None:
+                try:
+                    forced_device = sd.query_devices(self._forced_device_index)
+                    logger.info(f"使用偏好输入设备: {forced_device.get('name', '未知设备')}")
+                    return self._forced_device_index, forced_device
+                except Exception:
+                    self._forced_device_index = None
+
             device = sd.query_devices(kind='input')
             default_device = sd.default.device
             device_index = None
@@ -151,41 +211,8 @@ class AudioStreamManager:
                     device_index = None
             return device_index, device
         except sd.PortAudioError as default_error:
-            try:
-                devices = sd.query_devices()
-            except Exception:
-                raise default_error
-
-            candidates = []
-            for index, candidate in enumerate(devices):
-                if candidate.get('max_input_channels', 0) > 0:
-                    name = candidate.get('name', '未知设备')
-                    lower_name = name.lower()
-                    score = 0
-
-                    preferred_tokens = ('麦克风', 'microphone', 'mic', 'headset', 'realtek', 'usb')
-                    virtual_tokens = (
-                        'sonic studio',
-                        'virtual',
-                        'vad',
-                        'wave speaker',
-                        'stereo mix',
-                        'what u hear',
-                        'loopback',
-                        'mix',
-                        'output',
-                        'speaker',
-                    )
-
-                    if any(token in lower_name for token in preferred_tokens):
-                        score -= 10
-                    if any(token in lower_name for token in virtual_tokens):
-                        score += 100
-
-                    candidates.append((score, index, candidate))
-
-            if candidates:
-                _, index, candidate = sorted(candidates, key=lambda item: (item[0], item[1]))[0]
+            index, candidate = self._pick_preferred_input_device()
+            if candidate is not None:
                 logger.warning(
                     f"默认输入设备不可用，回退到输入设备 #{index}: {candidate.get('name', '未知设备')}"
                 )

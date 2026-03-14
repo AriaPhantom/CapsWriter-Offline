@@ -43,9 +43,9 @@ def cleanup_client_resources():
     if state.stream_manager:
         try:
             if hasattr(state.stream_manager, 'shutdown'):
-                 state.stream_manager.shutdown()
+                state.stream_manager.shutdown()
             elif hasattr(state.stream_manager, 'close'):
-                 state.stream_manager.close()
+                state.stream_manager.close()
             # state.stream will be set to None in state.reset() later
         except Exception as e:
             logger.warning(f"停止音频流时发生错误: {e}")
