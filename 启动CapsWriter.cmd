@@ -2,26 +2,29 @@
 setlocal
 cd /d "%~dp0"
 
-set "APP_DIR=%~dp0"
+set "SCRIPT=%~dp0capswriter_gui.pyw"
 set "PYTHONW=%LocalAppData%\Programs\Python\Python311\pythonw.exe"
 
-if exist "%PYTHONW%" (
-    start "" "%PYTHONW%" "%APP_DIR%capswriter_gui.pyw"
-    exit /b 0
-)
-
-where pyw.exe >nul 2>nul
-if not errorlevel 1 (
-    start "" pyw.exe -3 "%APP_DIR%capswriter_gui.pyw"
-    exit /b 0
-)
+if exist "%PYTHONW%" goto run_pythonw
 
 where pythonw.exe >nul 2>nul
-if not errorlevel 1 (
-    start "" pythonw.exe "%APP_DIR%capswriter_gui.pyw"
-    exit /b 0
-)
+if not errorlevel 1 goto run_path_pythonw
 
-echo [CapsWriter] 未找到可用的 pythonw/pyw，请先安装 Python 3 并确保 pythonw.exe 可用。
+where pyw.exe >nul 2>nul
+if not errorlevel 1 goto run_pyw
+
+echo [CapsWriter] No usable pythonw/pyw was found. Please install Python 3 first.
 pause
 exit /b 1
+
+:run_pythonw
+start "" "%PYTHONW%" "%SCRIPT%"
+exit /b 0
+
+:run_path_pythonw
+start "" pythonw.exe "%SCRIPT%"
+exit /b 0
+
+:run_pyw
+start "" pyw.exe -3 "%SCRIPT%"
+exit /b 0
