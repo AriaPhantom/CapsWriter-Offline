@@ -86,12 +86,12 @@ LLM 角色既可以使用 Ollama 运行的本地模型，又可以用 API 访问
 5.  **开始录音**：按住 `CapsLock键` 或 `鼠标侧键X2` 就可以说话了！
 
 > **可选：GUI 控制中心（源码版）**  
-> 运行 `pythonw capswriter_gui.pyw` 可以用一个托盘面板统一管理服务端/客户端、查看日志、重启后台，并避免常驻黑窗口；也可以直接双击目录里的 `启动CapsWriter.cmd`，脚本会优先使用本机 Python 3 的 `pythonw`，找不到时再回退到 PATH 中的 `pythonw/pyw` 启动 GUI，并在已有实例存在时直接唤醒主面板。新版界面默认采用侧边栏导航、仪表盘总览和独立日志页布局，并把默认窗口尺寸、日志预览高度都收紧到更适合日常快速查看的大小。GUI 轮询也已改轻量，不再每次刷新都扫描整份日志文件。 Status scans, log enumeration, and log-tail preview now run on a background thread so the Tk UI thread stays responsive. Port checks read OS listening sockets to avoid triggering websocket handshake errors. System Status ignores benign websocket handshake failures. The client now polls the Windows default input device and silently reopens the audio stream when the default microphone changes, which helps Bluetooth headset connect/disconnect switching. It also watches input device hot-plug events, prefers Bluetooth/hands-free devices (AG Audio / 蓝牙 / 耳机 等命名) when they appear even if Windows default lags, reopens if the current input device disappears, and falls back to the next available input device if the preferred headset device fails to open (then retries after a short cooldown).
+> 运行 `pythonw capswriter_gui.pyw` 可以用一个托盘面板统一管理服务端/客户端、查看日志、重启后台，并避免常驻黑窗口；也可以直接双击目录里的 `启动CapsWriter.cmd`，脚本会优先使用本机 Python 3 的 `pythonw`，找不到时再回退到 PATH 中的 `pythonw/pyw` 启动 GUI，并在已有实例存在时直接唤醒主面板。新版界面默认采用侧边栏导航、仪表盘总览和独立日志页布局，并把默认窗口尺寸、日志预览高度都收紧到更适合日常快速查看的大小。Dashboard 顶部现在可以直接切换语音模型（Fun-ASR-Nano / Qwen3-ASR-1.7B / SenseVoice / Paraformer）并一键重启后台。GUI 轮询也已改轻量，不再每次刷新都扫描整份日志文件。 Status scans, log enumeration, and log-tail preview now run on a background thread so the Tk UI thread stays responsive. Port checks read OS listening sockets to avoid triggering websocket handshake errors. System Status ignores benign websocket handshake failures. The client now polls the Windows default input device and silently reopens the audio stream when the default microphone changes, which helps Bluetooth headset connect/disconnect switching. It also watches input device hot-plug events, prefers Bluetooth/hands-free devices (AG Audio / 蓝牙 / 耳机 等命名) when they appear even if Windows default lags, reopens if the current input device disappears, and falls back to the next available input device if the preferred headset device fails to open (then retries after a short cooldown).
 
 
 ## 🎤 模型说明
 
-你可以在 `config_server.py` 的 `model_type` 中切换：
+你可以在 GUI 控制中心 Dashboard 顶部的下拉框里切换，或直接改 `config_server.py` 的 `model_type`：
 
 -   **qwen_asr**：    自带标点，CPU 速度及格，独显加速超快，准确率：夯爆了。
 -   **fun_asr_nano**：自带标点，CPU 速度较快，独显加速超快，准确率：顶级。

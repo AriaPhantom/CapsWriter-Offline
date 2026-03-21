@@ -110,7 +110,7 @@ def init_recognizer(queue_in: Queue, queue_out: Queue, sockets_id, stdin_fn):
                 **{key: value for key, value in ParaformerArgs.__dict__.items() if not key.startswith('_')}
             )
         else:
-            error_msg = f"不支持的模型类型: {Config.model_type}，请选择 'fun_asr_nano'、'sensevoice' 或 'paraformer'"
+            error_msg = f"不支持的模型类型: {Config.model_type}，请选择 'fun_asr_nano'、'qwen_asr'、'sensevoice' 或 'paraformer'"
             logger.error(error_msg)
             raise ValueError(error_msg)
     except Exception as e:

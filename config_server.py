@@ -14,7 +14,7 @@ class ServerConfig:
     port = '6016'
 
     # 语音模型选择：'fun_asr_nano', 'sensevoice', 'paraformer', 'qwen_asr'
-    model_type = 'qwen_asr'
+    model_type = 'fun_asr_nano'
 
     format_num = True       # 输出时是否将中文数字转为阿拉伯数字
     format_spell = True     # 输出时是否调整中英之间的空格
@@ -139,4 +139,3 @@ class Qwen3ASRGGUFArgs:
     chunk_size = 80.0           # 分段长度（秒）
     pad_to = 30                 # 开启 DirectML 加速时，短音频统一填充到指定长度，有加速效果
     verbose = False
-

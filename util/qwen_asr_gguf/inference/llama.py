@@ -156,6 +156,20 @@ llama_sampler_init_min_p = None
 llama_sampler_init_penalties = None
 llama_sampler_accept = None
 
+def _resolve_llama_bin_dir() -> str:
+    module_dir = os.path.dirname(os.path.abspath(__file__))
+    candidate_dirs = [
+        os.path.join(module_dir, "bin"),
+        os.path.join(os.path.dirname(module_dir), "bin"),
+        os.path.join(os.path.dirname(os.path.dirname(module_dir)), "fun_asr_gguf", "bin"),
+    ]
+    for candidate in candidate_dirs:
+        if os.path.exists(os.path.join(candidate, "llama.dll")):
+            return candidate
+    raise FileNotFoundError(
+        f"未找到 llama.cpp 动态库目录，请检查这些路径之一是否存在 llama.dll: {candidate_dirs}"
+    )
+
 def init_llama_lib():
     """初始化 llama.cpp 库，支持跨平台加载"""
     global llama, ggml, ggml_base
@@ -176,8 +190,7 @@ def init_llama_lib():
     if llama is not None:
         return
 
-    # 获取库文件所在目录 (模块目录下的 bin)
-    lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin")
+    module_dir = os.path.dirname(os.path.abspath(__file__))
 
     # DLL 命名处理
     if sys.platform == "win32":
@@ -192,6 +205,8 @@ def init_llama_lib():
         GGML_DLL = "libggml.so"
         GGML_BASE_DLL = "libggml-base.so"
         LLAMA_DLL = "libllama.so"
+
+    lib_dir = _resolve_llama_bin_dir()
 
     ggml = ctypes.CDLL(os.path.join(lib_dir, GGML_DLL))
     ggml_base = ctypes.CDLL(os.path.join(lib_dir, GGML_BASE_DLL))
@@ -385,7 +400,7 @@ def load_model(model_path: str):
     Returns:
         model: llama_model 指针
     """
-    lib_dir = Path(__file__).parent / 'bin'
+    lib_dir = Path(_resolve_llama_bin_dir())
     model_path = Path(model_path)
     model_rel = Path(relpath(model_path, lib_dir))
 

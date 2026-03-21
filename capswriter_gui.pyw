@@ -24,9 +24,18 @@ ROOT_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = ROOT_DIR / "assets"
 ICON_PATH = ASSETS_DIR / "icon.ico"
 LOG_DIR = ROOT_DIR / "logs"
+SERVER_CONFIG_PATH = ROOT_DIR / "config_server.py"
 PORT = 6016
 CONTROL_PORT = 6019
 CREATE_NO_WINDOW = 0x08000000
+MODEL_OPTIONS = (
+    ("Qwen3-ASR-1.7B", "qwen_asr"),
+    ("Fun-ASR-Nano", "fun_asr_nano"),
+    ("SenseVoice", "sensevoice"),
+    ("Paraformer", "paraformer"),
+)
+MODEL_LABEL_TO_VALUE = dict(MODEL_OPTIONS)
+MODEL_VALUE_TO_LABEL = {value: label for label, value in MODEL_OPTIONS}
 
 
 @dataclass(frozen=True)
@@ -54,7 +63,7 @@ class BackendManager:
     def __init__(self, root_dir: Path) -> None:
         self.root_dir = root_dir
         self.backend_python = self._resolve_backend_python()
-        self.server_target = self._resolve_target("start_server")
+        self.server_targets = self._resolve_targets("start_server")
         self.client_target = self._resolve_target("start_client")
 
     def _resolve_backend_python(self) -> Path:
@@ -64,24 +73,51 @@ class BackendManager:
             return python_exe
         return current
 
-    def _resolve_target(self, stem: str) -> LaunchTarget:
+    def _resolve_targets(self, stem: str) -> list[LaunchTarget]:
+        targets: list[LaunchTarget] = []
         exe_path = (self.root_dir / f"{stem}.exe").resolve()
         if exe_path.exists():
-            return LaunchTarget(
-                command=(str(exe_path),),
-                match_mode="exe",
-                match_path=exe_path,
+            targets.append(
+                LaunchTarget(
+                    command=(str(exe_path),),
+                    match_mode="exe",
+                    match_path=exe_path,
+                )
             )
 
         script_path = (self.root_dir / f"{stem}.py").resolve()
         if script_path.exists():
-            return LaunchTarget(
-                command=(str(self.backend_python), str(script_path)),
-                match_mode="script",
-                match_path=script_path,
+            targets.append(
+                LaunchTarget(
+                    command=(str(self.backend_python), str(script_path)),
+                    match_mode="script",
+                    match_path=script_path,
+                )
             )
 
-        raise FileNotFoundError(f"未找到 {stem}.exe 或 {stem}.py")
+        if not targets:
+            raise FileNotFoundError(f"未找到 {stem}.exe 或 {stem}.py")
+        return targets
+
+    def _resolve_target(self, stem: str) -> LaunchTarget:
+        return self._resolve_targets(stem)[0]
+
+    def _current_model_type(self) -> str:
+        try:
+            content = SERVER_CONFIG_PATH.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+        match = re.search(r"^\s*model_type\s*=\s*['\"]([^'\"]+)['\"]", content, re.MULTILINE)
+        return match.group(1).strip() if match else ""
+
+    def _preferred_server_target(self) -> LaunchTarget:
+        for target in self.server_targets:
+            if target.match_mode == "script":
+                return target
+        for target in self.server_targets:
+            if target.match_mode == "exe":
+                return target
+        return self.server_targets[0]
 
     def _matching_processes(self, target: LaunchTarget) -> list[psutil.Process]:
         matches: list[psutil.Process] = []
@@ -107,7 +143,15 @@ class BackendManager:
         return matches
 
     def server_processes(self) -> list[psutil.Process]:
-        return self._matching_processes(self.server_target)
+        matches: list[psutil.Process] = []
+        seen: set[int] = set()
+        for target in self.server_targets:
+            for proc in self._matching_processes(target):
+                if proc.pid in seen:
+                    continue
+                seen.add(proc.pid)
+                matches.append(proc)
+        return matches
 
     def client_processes(self) -> list[psutil.Process]:
         return self._matching_processes(self.client_target)
@@ -175,7 +219,7 @@ class BackendManager:
 
     def start_all(self) -> None:
         if not self.server_processes():
-            self._spawn_hidden(self.server_target)
+            self._spawn_hidden(self._preferred_server_target())
         for _ in range(40):
             if self.is_port_open():
                 break
@@ -243,6 +287,8 @@ class CapsWriterGUI:
         self.last_result = StringVar(value="尚无识别结果")
         self.last_error = StringVar(value="系统状态正常")
         self.activity = StringVar(value="准备就绪")
+        self.model_choice = StringVar(value="")
+        self.active_model = StringVar(value="读取中…")
 
         self.client_log_choice = StringVar(value="")
         self.server_log_choice = StringVar(value="")
@@ -267,6 +313,7 @@ class CapsWriterGUI:
         self.current_page = "overview"
 
         self._build_styles()
+        self._refresh_model_selection()
         self._build_ui()
         self._start_control_server()
         self._run_initial_backend_action()
@@ -408,6 +455,31 @@ class CapsWriterGUI:
         self._status_card(status_row, "Service Status", self.status_backend, 0)
         self._status_card(status_row, "ASR Server (6016)", self.status_port, 1)
         self._status_card(status_row, "Active Client", self.status_client, 2)
+
+        model_card = ttk.Frame(page, style="Card.TFrame", padding=(16, 14))
+        model_card.pack(fill="x", pady=(0, 14))
+
+        model_info = ttk.Frame(model_card, style="Card.TFrame")
+        model_info.pack(side="left", fill="x", expand=True)
+        ttk.Label(model_info, text="SPEECH MODEL", style="CardTitle.TLabel", font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        ttk.Label(model_info, textvariable=self.active_model, style="CardValue.TLabel", font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(8, 0))
+
+        model_actions = ttk.Frame(model_card, style="Card.TFrame")
+        model_actions.pack(side="right")
+        ttk.Combobox(
+            model_actions,
+            textvariable=self.model_choice,
+            state="readonly",
+            width=22,
+            values=[label for label, _value in MODEL_OPTIONS],
+            style="Caps.TCombobox",
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            model_actions,
+            text="Apply + Restart",
+            style="Caps.TButton",
+            command=self._apply_model_selection,
+        ).pack(side="left")
 
         # Result Area
         result_card = ttk.Frame(page, style="Card.TFrame", padding=16)
@@ -778,6 +850,61 @@ class CapsWriterGUI:
         }
         activity_text, func = actions.get(self.backend_action, actions["start"])
         self._run_async(activity_text, func)
+
+    def _read_config_model_type(self) -> str:
+        try:
+            content = SERVER_CONFIG_PATH.read_text(encoding="utf-8")
+        except OSError:
+            return "fun_asr_nano"
+        match = re.search(r"^(\s*model_type\s*=\s*['\"])([^'\"]+)(['\"])", content, re.MULTILINE)
+        return match.group(2).strip() if match else "fun_asr_nano"
+
+    def _write_config_model_type(self, model_type: str) -> None:
+        content = SERVER_CONFIG_PATH.read_text(encoding="utf-8")
+        updated, count = re.subn(
+            r"^(\s*model_type\s*=\s*['\"])([^'\"]+)(['\"])",
+            rf"\g<1>{model_type}\g<3>",
+            content,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if count != 1:
+            raise RuntimeError("未找到 config_server.py 中的 model_type 配置项")
+        SERVER_CONFIG_PATH.write_text(updated, encoding="utf-8")
+
+    def _refresh_model_selection(self) -> None:
+        model_type = self._read_config_model_type()
+        label = MODEL_VALUE_TO_LABEL.get(model_type, model_type)
+        self.active_model.set(label)
+        if label in MODEL_LABEL_TO_VALUE:
+            self.model_choice.set(label)
+
+    def _apply_model_selection(self) -> None:
+        label = self.model_choice.get().strip()
+        model_type = MODEL_LABEL_TO_VALUE.get(label)
+        if not model_type:
+            self.activity.set("Please select a valid speech model")
+            return
+
+        current = self._read_config_model_type()
+        if current == model_type:
+            self.activity.set(f"Speech model already set to {label}")
+            self.active_model.set(label)
+            return
+
+        self.activity.set(f"Switching speech model to {label}...")
+
+        def worker() -> None:
+            try:
+                self._write_config_model_type(model_type)
+                self.manager.restart_all()
+                self.root.after(0, lambda: self.active_model.set(label))
+                self.root.after(0, lambda: self.activity.set(f"Switched to {label}"))
+                self.root.after(0, lambda: self._request_refresh(force_log_prefixes=("server",)))
+            except Exception as exc:  # noqa: BLE001
+                self.root.after(0, lambda: self.activity.set(f"Switch Failed: {exc}"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _on_unmap(self, _event) -> None:
         try:
