@@ -29,6 +29,8 @@ def check_model() -> None:
     logger.debug(f"检查模型文件, 类型: {model_type}")
 
     # 根据模型类型确定需要检查的文件
+    download_page = ModelDownloadLinks.models_page
+
     if model_type == 'fun_asr_nano':
         required_files = {
             'Fun-ASR-Nano-GGUF 模型文件': [
@@ -56,11 +58,21 @@ def check_model() -> None:
             ]
         }
     elif model_type == 'qwen_asr':
+        download_page = ModelDownloadLinks.qwen_models_page
         required_files = {
             'Qwen-ASR-GGUF 模型文件': [
                 ModelPaths.qwen3_asr_gguf_encoder_frontend,
                 ModelPaths.qwen3_asr_gguf_encoder_backend,
                 ModelPaths.qwen3_asr_gguf_llm_decode,
+            ]
+        }
+    elif model_type == 'qwen_asr_0_6b':
+        download_page = ModelDownloadLinks.qwen_models_page
+        required_files = {
+            'Qwen-ASR-0.6B-GGUF 模型文件': [
+                ModelPaths.qwen3_asr_0_6b_gguf_encoder_frontend,
+                ModelPaths.qwen3_asr_0_6b_gguf_encoder_backend,
+                ModelPaths.qwen3_asr_0_6b_gguf_llm_decode,
             ]
         }
     else:
@@ -74,6 +86,7 @@ def check_model() -> None:
     - 'sensevoice'
     - 'paraformer'
     - 'qwen_asr'
+    - 'qwen_asr_0_6b'
 
         ''', style='bright_red')
         input('按回车退出')
@@ -99,7 +112,7 @@ def check_model() -> None:
 
         # 提供统一下载页面链接
         error_msg += f'    [cyan]请前往模型发布页下载缺失文件：[/cyan]\n'
-        error_msg += f'    [cyan]{ModelDownloadLinks.models_page}[/cyan]\n\n'
+        error_msg += f'    [cyan]{download_page}[/cyan]\n\n'
 
         error_msg += f'    下载后请根据发布页说明，解压到：[cyan]{ModelPaths.model_dir}[/cyan]\n'
         error_msg += '    \n'

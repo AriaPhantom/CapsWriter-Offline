@@ -13,7 +13,7 @@ class ServerConfig:
     addr = '0.0.0.0'
     port = '6016'
 
-    # 语音模型选择：'fun_asr_nano', 'sensevoice', 'paraformer', 'qwen_asr'
+    # 语音模型选择：'fun_asr_nano', 'sensevoice', 'paraformer', 'qwen_asr', 'qwen_asr_0_6b'
     model_type = 'fun_asr_nano'
 
     format_num = True       # 输出时是否将中文数字转为阿拉伯数字
@@ -32,6 +32,7 @@ class ModelDownloadLinks:
     """模型下载链接配置"""
     # 统一导向 GitHub Release 模型页面
     models_page = "https://github.com/HaujetZhao/CapsWriter-Offline/releases/tag/models"
+    qwen_models_page = "https://github.com/HaujetZhao/Qwen3-ASR-GGUF/releases/tag/models"
 
 
 class ModelPaths:
@@ -66,6 +67,12 @@ class ModelPaths:
     qwen3_asr_gguf_encoder_frontend = qwen3_asr_gguf_dir / 'qwen3_asr_encoder_frontend.fp16.onnx'
     qwen3_asr_gguf_encoder_backend = qwen3_asr_gguf_dir / 'qwen3_asr_encoder_backend.fp16.onnx'
     qwen3_asr_gguf_llm_decode = qwen3_asr_gguf_dir / 'qwen3_asr_llm.q4_k.gguf'
+
+    # Qwen3-ASR 0.6B 模型路径，自带标点
+    qwen3_asr_0_6b_gguf_dir = model_dir / 'Qwen3-ASR' / 'Qwen3-ASR-0.6B'
+    qwen3_asr_0_6b_gguf_encoder_frontend = qwen3_asr_0_6b_gguf_dir / 'qwen3_asr_encoder_frontend.int4.onnx'
+    qwen3_asr_0_6b_gguf_encoder_backend = qwen3_asr_0_6b_gguf_dir / 'qwen3_asr_encoder_backend.int4.onnx'
+    qwen3_asr_0_6b_gguf_llm_decode = qwen3_asr_0_6b_gguf_dir / 'qwen3_asr_llm.q4_k.gguf'
 
 
 
@@ -132,6 +139,28 @@ class Qwen3ASRGGUFArgs:
     vulkan_enable = True        # 是否启用 Vulkan 加速 GGUF 模型
     vulkan_force_fp32 = False   # 是否强制 FP32 计算（如果 GPU 是 Intel 集显且出现精度溢出，可设为 True）
     
+    # 模型细节
+    n_predict = 512             # LLM 最大生成 token 数
+    n_threads = None            # 线程数，None 表示自动
+    n_ctx = 2048                # 上下文窗口大小
+    chunk_size = 80.0           # 分段长度（秒）
+    pad_to = 30                 # 开启 DirectML 加速时，短音频统一填充到指定长度，有加速效果
+    verbose = False
+
+
+class Qwen3ASR0_6BGGUFArgs:
+    """Qwen3-ASR-0.6B-GGUF 模型参数配置"""
+
+    # 模型路径
+    model_dir = ModelPaths.qwen3_asr_0_6b_gguf_dir.as_posix()
+    encoder_frontend_fn = ModelPaths.qwen3_asr_0_6b_gguf_encoder_frontend.name
+    encoder_backend_fn = ModelPaths.qwen3_asr_0_6b_gguf_encoder_backend.name
+    llm_fn = ModelPaths.qwen3_asr_0_6b_gguf_llm_decode.name
+
+    # 显卡加速
+    use_dml = False             # 是否启用 DirectML 加速 ONNX 模型，实测 AMD 显卡上会慢，因此默认关闭，建议 N 卡开启
+    vulkan_enable = True        # 是否启用 Vulkan 加速 GGUF 模型
+    vulkan_force_fp32 = False   # 是否强制 FP32 计算（如果 GPU 是 Intel 集显且出现精度溢出，可设为 True）
     # 模型细节
     n_predict = 512             # LLM 最大生成 token 数
     n_threads = None            # 线程数，None 表示自动

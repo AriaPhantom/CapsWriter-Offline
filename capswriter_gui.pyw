@@ -30,6 +30,7 @@ CONTROL_PORT = 6019
 CREATE_NO_WINDOW = 0x08000000
 MODEL_OPTIONS = (
     ("Qwen3-ASR-1.7B", "qwen_asr"),
+    ("Qwen3-ASR-0.6B", "qwen_asr_0_6b"),
     ("Fun-ASR-Nano", "fun_asr_nano"),
     ("SenseVoice", "sensevoice"),
     ("Paraformer", "paraformer"),

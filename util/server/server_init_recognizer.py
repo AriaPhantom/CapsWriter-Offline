@@ -6,7 +6,14 @@ import signal
 import atexit
 from platform import system
 from config_server import ServerConfig as Config
-from config_server import ParaformerArgs, ModelPaths, SenseVoiceArgs, FunASRNanoGGUFArgs, Qwen3ASRGGUFArgs
+from config_server import (
+    ParaformerArgs,
+    ModelPaths,
+    SenseVoiceArgs,
+    FunASRNanoGGUFArgs,
+    Qwen3ASRGGUFArgs,
+    Qwen3ASR0_6BGGUFArgs,
+)
 from util.server.server_check_model import check_model
 from util.server.server_cosmic import console
 from util.server.server_recognize import recognize
@@ -97,6 +104,11 @@ def init_recognizer(queue_in: Queue, queue_out: Queue, sockets_id, stdin_fn):
             recognizer = create_qwen_asr_engine(
                 **{key: value for key, value in Qwen3ASRGGUFArgs.__dict__.items() if not key.startswith('_')}
             )
+        elif model_type == 'qwen_asr_0_6b':
+            logger.debug("使用 Qwen-ASR 0.6B 模型")
+            recognizer = create_qwen_asr_engine(
+                **{key: value for key, value in Qwen3ASR0_6BGGUFArgs.__dict__.items() if not key.startswith('_')}
+            )
         elif model_type == 'sensevoice':
             import sherpa_onnx
             logger.debug("使用 SenseVoice 模型")
@@ -110,7 +122,7 @@ def init_recognizer(queue_in: Queue, queue_out: Queue, sockets_id, stdin_fn):
                 **{key: value for key, value in ParaformerArgs.__dict__.items() if not key.startswith('_')}
             )
         else:
-            error_msg = f"不支持的模型类型: {Config.model_type}，请选择 'fun_asr_nano'、'qwen_asr'、'sensevoice' 或 'paraformer'"
+            error_msg = f"不支持的模型类型: {Config.model_type}，请选择 'fun_asr_nano'、'qwen_asr'、'qwen_asr_0_6b'、'sensevoice' 或 'paraformer'"
             logger.error(error_msg)
             raise ValueError(error_msg)
     except Exception as e:
