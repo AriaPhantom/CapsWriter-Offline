@@ -231,19 +231,45 @@ class BackendManager:
         self.hide_backend_windows()
 
     def stop_all(self) -> None:
-        procs: dict[int, psutil.Process] = {}
+        # 先杀子进程，再杀父进程。
+        #
+        # 顺序反了会漏进程：识别子进程加载 sherpa-onnx，单进程提交约 4GB，
+        # 一旦父进程先死，它就成了孤儿 —— 而孤儿的命令行是
+        # `-c "from multiprocessing.spawn import spawn_main; ..."`，
+        # 下一轮 server_processes() 的匹配一个都不中，再也找不回来，
+        # 每次重启后端就累积一份。
+        #
+        # 另外 children() 要在杀之前重新枚举一次：模型加载期间 server 还会
+        # 继续 spawn 子进程，用一份过期快照会把它们漏掉。
+        roots: dict[int, psutil.Process] = {}
+        children: dict[int, psutil.Process] = {}
         for proc in self.client_processes() + self.server_processes():
             try:
-                procs[proc.pid] = proc
+                roots[proc.pid] = proc
                 for child in proc.children(recursive=True):
-                    procs[child.pid] = child
+                    children[child.pid] = child
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
-        for proc in procs.values():
+
+        def _kill(p: psutil.Process) -> None:
             try:
-                proc.kill()
+                p.kill()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
+
+        for proc in children.values():
+            _kill(proc)
+        for proc in roots.values():
+            _kill(proc)
+
+        # 父进程死亡瞬间可能又有子进程刚 spawn 出来，补扫一轮。
+        for proc in roots.values():
+            try:
+                for child in proc.children(recursive=True):
+                    _kill(child)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
         deadline = time.time() + 5
         while time.time() < deadline:
             if not self.server_processes() and not self.client_processes():
