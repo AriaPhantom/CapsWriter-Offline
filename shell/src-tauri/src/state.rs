@@ -77,20 +77,12 @@ impl AppState {
         self.inner.lock().recording = active;
     }
 
-    pub fn is_recording(&self) -> bool {
-        self.inner.lock().recording
-    }
-
     pub fn note_toast_open(&self, id: &str) {
         self.inner.lock().open_toasts.insert(id.to_string());
     }
 
     pub fn note_toast_closed(&self, id: &str) {
         self.inner.lock().open_toasts.remove(id);
-    }
-
-    pub fn has_open_toasts(&self) -> bool {
-        !self.inner.lock().open_toasts.is_empty()
     }
 
     /// 记录一个通知气泡将占用浮层多久（含淡出与少量余量）
@@ -211,12 +203,16 @@ impl AppState {
     fn scan_backend_processes(&self) -> (Vec<u32>, Vec<u32>) {
         let mut sys = self.sys.lock();
         // 只刷新进程列表，且只要 cmd + exe，不要内存/CPU 等昂贵字段
+        // 需要 cmd / exe / cwd 三个字段：cwd 是判定归属的主要依据
+        //（`pythonw.exe start_client.py` 这种相对路径启动，只有 cwd 能区分
+        // 是哪一份安装）。仍然不要内存/CPU 等昂贵字段。
         sys.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
             ProcessRefreshKind::nothing()
                 .with_cmd(UpdateKind::Always)
-                .with_exe(UpdateKind::Always),
+                .with_exe(UpdateKind::Always)
+                .with_cwd(UpdateKind::Always),
         );
 
         let mut server = Vec::new();
@@ -255,11 +251,20 @@ impl AppState {
             // 会把别的副本认成自己。那不只是状态显示错，`stop_all` 还会
             // taskkill 掉另一份正在使用的客户端。
             //
-            // 判定只认两种确定性证据：
-            //   1. 命令行里出现本 root 的完整路径（python 跑本目录的脚本）
-            //   2. 进程 exe 就在本 root 之下（打包版 start_*.exe）
+            // 判定认三种确定性证据（任一成立即属于本安装）：
+            //   1. 进程的**工作目录**就是本 root
+            //      —— 最常见的情形：`pythonw.exe start_client.py`，
+            //         脚本是相对路径，命令行里根本没有安装目录，
+            //         只有 cwd 能说明它跑的是哪一份。
+            //   2. 命令行里出现本 root 的完整路径（用绝对路径启动脚本）
+            //   3. 进程 exe 位于本 root 之下（打包版 start_*.exe）
             let root_lossy = self.root.to_string_lossy().to_ascii_lowercase();
-            let belongs = cmd_joined.contains(&root_lossy)
+            let cwd_matches = proc_
+                .cwd()
+                .map(|p| paths_equal(p, &self.root))
+                .unwrap_or(false);
+            let belongs = cwd_matches
+                || cmd_joined.contains(&root_lossy)
                 || proc_
                     .exe()
                     .map(|p| p.starts_with(&self.root))
@@ -304,6 +309,16 @@ impl AppState {
         }
         String::new()
     }
+}
+
+/// 两个路径是否指向同一目录。
+///
+/// 先尝试 canonicalize（消化 8.3 短名、符号链接、大小写差异），
+/// 失败时退回字符串比较。Windows 路径大小写不敏感，统一转小写。
+fn paths_equal(a: &Path, b: &Path) -> bool {
+    let ca = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
+    let cb = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
+    ca.to_string_lossy().to_ascii_lowercase() == cb.to_string_lossy().to_ascii_lowercase()
 }
 
 /// TCP 连通性探测。比 psutil 的 net_connections 枚举全表更轻，

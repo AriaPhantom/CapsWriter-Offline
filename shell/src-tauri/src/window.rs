@@ -10,7 +10,7 @@
 //!   打字时焦点始终留在目标程序里。
 
 use crate::state::AppState;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const DASHBOARD_LABEL: &str = "dashboard";
 pub const OVERLAY_LABEL: &str = "overlay";
@@ -124,6 +124,10 @@ pub fn show_dashboard(app: &AppHandle) -> tauri::Result<()> {
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();
+        // 明确告知前端「你现在可见了，去刷新」。
+        // 不依赖 visibilitychange —— 它在 hide/show 时不保证触发，
+        // 漏一次就会让面板永久停在旧数据上。
+        let _ = win.emit("dashboard-shown", ());
         return Ok(());
     }
 

@@ -9,6 +9,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./theme.css";
 import "./dashboard.css";
@@ -179,6 +180,13 @@ function render(s: StatusSnapshot) {
   setPill("p-cli", s.clientRunning ? "ok" : "err");
   $("t-cli").textContent = s.clientRunning ? "已连接" : "未运行";
 
+  // 端口通但进程没认出来 —— 说明探测逻辑漏了，如实说出来，
+  // 不要让用户看着「未运行」却明明能用
+  if (s.portOpen && !s.serverRunning) {
+    $("t-svc").textContent = "运行中(外部)";
+    setPill("p-svc", "ok");
+  }
+
   $("live-dot").classList.toggle("live", svcOn && s.clientRunning);
 
   // 模型
@@ -209,7 +217,11 @@ function render(s: StatusSnapshot) {
     }
   }
 
-  $("foot-probe").textContent = `probe ${s.probeMs}ms`;
+  // 带上采样时刻：万一轮询又停了，用户能一眼看出「这是几分钟前的数据」，
+  // 而不是把过期快照当成当前状态
+  const now = new Date();
+  const hhmmss = now.toLocaleTimeString("zh-CN", { hour12: false });
+  $("foot-probe").textContent = `${hhmmss} · probe ${s.probeMs}ms`;
 }
 
 // ============================================================
@@ -340,18 +352,30 @@ document.querySelectorAll<HTMLElement>("[data-refresh]").forEach((b) => {
 let timer: number | null = null;
 
 let loggedFirstTick = false;
+/** 上一次的状态指纹，仅用于在状态真正变化时留一行日志 */
+let lastFingerprint = "";
 
 async function tick(force = false) {
   if (document.hidden && !force) return;
   try {
     const s = await invoke<StatusSnapshot>("get_status");
     render(s);
+
+    const fp = `${s.serverRunning}|${s.clientRunning}|${s.portOpen}`;
     if (!loggedFirstTick) {
       loggedFirstTick = true;
+      lastFingerprint = fp;
       uiLog(
         "info",
         `dashboard 首次状态: server=${s.serverRunning} client=${s.clientRunning} ` +
           `port=${s.portOpen} model=${s.activeModel || "-"} probe=${s.probeMs}ms`,
+      );
+    } else if (fp !== lastFingerprint) {
+      // 状态变化留痕：轮询是否真的在跑，看这里就知道
+      lastFingerprint = fp;
+      uiLog(
+        "info",
+        `状态变化: server=${s.serverRunning} client=${s.clientRunning} port=${s.portOpen}`,
       );
     }
   } catch (e) {
@@ -378,10 +402,32 @@ function stopPolling() {
   }
 }
 
-// 窗口隐藏时停止轮询，托盘常驻期间零开销
+/**
+ * 何时轮询、何时停。
+ *
+ * 只靠 `visibilitychange` 是不够的：Tauri 里 `win.hide()` / `show()`
+ * 不保证成对触发它，一旦漏掉一次「变可见」，轮询就再也起不来，
+ * 面板会永久停在旧数据上（表现为「服务未运行，但其实能用」）。
+ *
+ * 所以以 Tauri 的窗口事件为主、`visibilitychange` 为辅，
+ * 并且每次回到前台都立刻强制刷新一次，不等下个周期。
+ */
+function resume() {
+  startPolling();
+  void tick(true);
+}
+
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) stopPolling();
-  else startPolling();
+  else resume();
+});
+
+// 后端在 show_dashboard() 里发出的权威信号
+void listen("dashboard-shown", resume);
+
+// 获得焦点也刷一次（用户点回面板时立刻看到最新状态）
+void win.onFocusChanged(({ payload: focused }) => {
+  if (focused) resume();
 });
 
 // 支持 ?page=client 直接打开某一页（调试与验证用）
