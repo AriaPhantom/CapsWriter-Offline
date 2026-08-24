@@ -114,8 +114,16 @@ fn kill_tree(pid: u32) -> Result<()> {
 pub fn stop_all(state: &AppState) -> Result<String> {
     let snap = state.snapshot();
     let mut n = 0;
-    // 先停 client 再停 server，顺序反了会让 client 报连接断开
-    for pid in snap.client_pids.iter().chain(snap.server_pids.iter()) {
+    // 先停 client 再停 server，顺序反了会让 client 报连接断开。
+    // 最后收孤儿：它们的父进程早就不在了，`/T` 顺不到，必须显式点名，
+    // 否则每轮重启都会留下一份约 4GB 提交的残留（详见 state.rs 的
+    // `collect_orphan_mp_children`）。
+    for pid in snap
+        .client_pids
+        .iter()
+        .chain(snap.server_pids.iter())
+        .chain(snap.orphan_pids.iter())
+    {
         if kill_tree(*pid).is_ok() {
             n += 1;
         }

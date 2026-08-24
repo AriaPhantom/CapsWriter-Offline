@@ -177,7 +177,7 @@ impl AppState {
         }
 
         let t0 = Instant::now();
-        let (server_pids, client_pids) = self.scan_backend_processes();
+        let (server_pids, client_pids, orphan_pids) = self.scan_backend_processes();
         let port_open = probe_port(ASR_PORT);
         let active_model = self.read_active_model();
         let last_recognition = self.inner.lock().last_recognition.clone();
@@ -190,6 +190,7 @@ impl AppState {
             port_open,
             server_pids,
             client_pids,
+            orphan_pids,
             active_model,
             last_recognition,
             probe_ms: t0.elapsed().as_millis() as u64,
@@ -199,8 +200,71 @@ impl AppState {
         snap
     }
 
-    /// 返回 (server_pids, client_pids)
-    fn scan_backend_processes(&self) -> (Vec<u32>, Vec<u32>) {
+    /// 收集本安装目录下的**孤儿** multiprocessing 子进程。
+    ///
+    /// 为什么需要这个：server 的识别子进程命令行长这样
+    ///
+    /// ```text
+    /// pythonw.exe -c "from multiprocessing.spawn import spawn_main;
+    ///                 spawn_main(parent_pid=1234, pipe_handle=360)"
+    /// ```
+    ///
+    /// 里面既没有 `start_server` 也没有 `core_server`，`scan_backend_processes`
+    /// 的粗筛一个都不匹配。父进程还活着时这不是问题 —— `taskkill /T` 会顺着
+    /// 父子关系带走它们。但父进程已经死了（上一轮崩了、被硬杀了）的时候，
+    /// 这些子进程的 PID 永远不会进入 `server_pids`，`stop_all` 看不见，
+    /// 于是每次重启后端就累积一份约 4GB 提交的残留。
+    ///
+    /// 只认**孤儿**（parent_pid 已不存在）：父进程活着的交给 `/T` 处理，
+    /// 避免在 server 正常启动期间把刚 spawn 出来的子进程当成垃圾。
+    /// 复用调用方已经刷新过的 `System`，不再单独扫一遍进程表。
+    fn collect_orphan_mp_children(&self, sys: &System) -> Vec<u32> {
+        let mut orphans = Vec::new();
+
+        for (pid, proc_) in sys.processes() {
+            let name = proc_.name().to_string_lossy().to_ascii_lowercase();
+            if name != "python.exe" && name != "pythonw.exe" && name != "python" {
+                continue;
+            }
+
+            let cmd_joined = proc_
+                .cmd()
+                .iter()
+                .map(|s| s.to_string_lossy().to_ascii_lowercase())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            if !cmd_joined.contains("multiprocessing.spawn") {
+                continue;
+            }
+
+            // 必须属于本安装目录。子进程继承父进程的 cwd，所以 cwd 是可靠依据；
+            // 这里绝不能放宽 —— 同机可能有第二份 CapsWriter 在正常运行。
+            let cwd_matches = proc_
+                .cwd()
+                .map(|p| paths_equal(p, &self.root))
+                .unwrap_or(false);
+            if !cwd_matches {
+                continue;
+            }
+
+            // 解析 parent_pid=N，父进程还在就跳过（交给 taskkill /T）
+            let Some(parent_pid) = parse_parent_pid(&cmd_joined) else {
+                continue;
+            };
+            let parent_alive = sys.process(sysinfo::Pid::from_u32(parent_pid)).is_some();
+            if parent_alive {
+                continue;
+            }
+
+            orphans.push(pid.as_u32());
+        }
+
+        orphans
+    }
+
+    /// 返回 (server_pids, client_pids, orphan_pids)
+    fn scan_backend_processes(&self) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
         let mut sys = self.sys.lock();
         // 只刷新进程列表，且只要 cmd + exe，不要内存/CPU 等昂贵字段
         // 需要 cmd / exe / cwd 三个字段：cwd 是判定归属的主要依据
@@ -281,7 +345,11 @@ impl AppState {
             }
         }
 
-        (server, client)
+        // 同一轮刷新里顺带把孤儿 multiprocessing 子进程也收集出来，
+        // 不额外扫一遍进程表。
+        let orphans = self.collect_orphan_mp_children(&sys);
+
+        (server, client, orphans)
     }
 
     /// 从 config_server.py 读当前 model_type
@@ -319,6 +387,43 @@ fn paths_equal(a: &Path, b: &Path) -> bool {
     let ca = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
     let cb = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
     ca.to_string_lossy().to_ascii_lowercase() == cb.to_string_lossy().to_ascii_lowercase()
+}
+
+/// 从 multiprocessing 子进程的命令行里取出 `parent_pid=N` 的 N。
+///
+/// 命令行形如：
+/// `pythonw.exe -c "from multiprocessing.spawn import spawn_main;
+///  spawn_main(parent_pid=1234, pipe_handle=360)" --multiprocessing-fork`
+fn parse_parent_pid(cmd: &str) -> Option<u32> {
+    let idx = cmd.find("parent_pid=")?;
+    let rest = &cmd[idx + "parent_pid=".len()..];
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_parent_pid;
+
+    #[test]
+    fn parses_parent_pid_from_real_cmdline() {
+        let cmd = "pythonw.exe -c \"from multiprocessing.spawn import spawn_main; \
+                   spawn_main(parent_pid=32328, pipe_handle=360)\" --multiprocessing-fork";
+        assert_eq!(parse_parent_pid(cmd), Some(32328));
+    }
+
+    #[test]
+    fn returns_none_without_parent_pid() {
+        assert_eq!(parse_parent_pid("pythonw.exe start_server.py"), None);
+    }
+
+    #[test]
+    fn returns_none_on_malformed_value() {
+        assert_eq!(parse_parent_pid("spawn_main(parent_pid=, pipe_handle=1)"), None);
+    }
 }
 
 /// TCP 连通性探测。比 psutil 的 net_connections 枚举全表更轻，

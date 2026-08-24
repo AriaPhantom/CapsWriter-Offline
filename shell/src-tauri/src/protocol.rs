@@ -189,6 +189,12 @@ pub struct StatusSnapshot {
     pub port_open: bool,
     pub server_pids: Vec<u32>,
     pub client_pids: Vec<u32>,
+    /// 父进程已消失、但仍在运行的 multiprocessing 子进程。
+    ///
+    /// 刻意与 `server_pids` 分开：`server_running` 是从 `server_pids`
+    /// 是否为空推出来的，把孤儿混进去会让 Dashboard 在只剩残留时
+    /// 错误地显示「server 正在运行」。这些 PID 只用于 `stop_all` 清理。
+    pub orphan_pids: Vec<u32>,
     pub active_model: String,
     pub last_recognition: Option<RecognitionInfo>,
     /// 采集这份快照本身花了多少毫秒，便于自查性能回退

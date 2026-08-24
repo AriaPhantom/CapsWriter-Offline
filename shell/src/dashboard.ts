@@ -28,6 +28,8 @@ interface StatusSnapshot {
   portOpen: boolean;
   serverPids: number[];
   clientPids: number[];
+  /** 父进程已消失但仍在运行的 multiprocessing 子进程，仅供 stop_all 清理 */
+  orphanPids: number[];
   activeModel: string;
   lastRecognition: RecognitionInfo | null;
   probeMs: number;
