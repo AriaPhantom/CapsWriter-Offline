@@ -34,8 +34,9 @@ def _setup_tray(state, base_dir):
     def clear_memory():
         from util.llm.llm_handler import clear_llm_history
         clear_llm_history()
-        from util.client.ui import toast
-        toast("清除成功：已清除所有角色的对话历史记录", duration=3000, bg="#075077")
+        from util.ui.toast_adapter import notify
+        notify("已清除所有角色的对话历史记录", level='success',
+               duration=3000, bg="#075077")
 
     def add_hotword():
         try:

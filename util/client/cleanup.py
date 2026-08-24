@@ -81,5 +81,12 @@ def cleanup_client_resources():
     except Exception as e:
         logger.warning(f"停止托盘图标时发生错误: {e}")
 
+    # 关闭外壳桥接（若从未使用则为空操作）
+    try:
+        from util.ui.shell_bridge import close_bridge
+        close_bridge()
+    except Exception as e:
+        logger.debug(f"关闭外壳桥接时发生错误: {e}")
+
     logger.info("客户端资源清理完成")
     console.print('[green4]再见！')

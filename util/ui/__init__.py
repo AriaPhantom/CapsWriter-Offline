@@ -40,6 +40,14 @@ def set_ui_logger(real_logger):
 from .toast import toast, toast_stream, ToastMessage, ToastMessageManager
 from .tray import enable_min_to_tray, stop_tray
 
+# 外壳适配层：优先走 Tauri 外壳，未启动时自动回退到上面的 Tk 实现
+from .toast_adapter import (
+    ToastSession,
+    notify,
+    recording_state,
+    recognition,
+)
+
 __all__ = [
     'logger',
     'set_ui_logger',
@@ -49,4 +57,9 @@ __all__ = [
     'ToastMessageManager',
     'enable_min_to_tray',
     'stop_tray',
+    # 外壳适配层
+    'ToastSession',
+    'notify',
+    'recording_state',
+    'recognition',
 ]

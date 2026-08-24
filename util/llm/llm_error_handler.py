@@ -79,26 +79,19 @@ def show_error_notification(error: Exception, role_name: str = "LLM"):
     # 记录日志
     logger.warning(f"[{role_name}] {user_msg} - {error}")
 
-    # 尝试显示 Toast 通知
+    # 尝试显示 Toast 通知（外壳在线走气泡，否则回退 Tk）
     try:
-        from util.ui.toast import ToastMessageManager, ToastMessage
+        from util.ui.toast_adapter import notify
 
-        toast_manager = ToastMessageManager()
-
-        # 错误提示使用红色背景，更大的尺寸
-        msg = ToastMessage(
-            text=f"❌ {role_name}: {user_msg}",
-            font_size=16,           # 增大字体
-            bg='#8B0000',           # 深红色
+        notify(
+            f"❌ {role_name}: {user_msg}",
+            level='error',
+            duration=5000,
+            bg='#8B0000',
             fg='white',
-            duration=5000,          # 显示 5 秒
-            initial_width=0.6,      # 60% 屏幕宽度（使用百分比）
-            initial_height=80,      # 固定最小高度 80 像素
-            streaming=False,
-            window_type='text'
+            font_size=16,
+            width=0.6,
         )
-        toast_manager.add_message(msg)
-        toast_manager.finish_last_toast()  # 自动销毁
 
     except Exception as e:
         # Toast 显示失败，回退到控制台

@@ -63,6 +63,19 @@ def _resolve_console_stream():
 console = SafeConsole(highlight=False, soft_wrap=True, theme=_theme, file=_resolve_console_stream())
 
 
+def _push_recording_state(active: bool, elapsed: float) -> None:
+    """
+    把录音状态推给外壳浮层（外壳未启动时为空操作）。
+
+    包在 try 里是刻意的：UI 通知永远不该影响录音链路。
+    """
+    try:
+        from util.ui.toast_adapter import recording_state
+        recording_state(active, elapsed)
+    except Exception as e:
+        logger.debug(f"推送录音状态到外壳失败: {e}")
+
+
 @dataclass
 class ClientState:
     """
@@ -160,6 +173,7 @@ class ClientState:
         self.recording = True
         self.recording_start_time = start_time
         logger.debug(f"录音状态已更新: recording=True, start_time={start_time:.2f}")
+        _push_recording_state(True, 0.0)
     
     def stop_recording(self) -> float:
         """
@@ -175,6 +189,7 @@ class ClientState:
         self.recording = False
         self.recording_start_time = 0.0
         logger.debug(f"录音状态已更新: recording=False, duration={duration:.2f}s")
+        _push_recording_state(False, duration)
         return duration
     
     @property

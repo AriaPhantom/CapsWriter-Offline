@@ -1,0 +1,113 @@
+/* CapsWriter 外壳设计令牌
+   深色玻璃质感，GPU 合成，所有动画只碰 transform / opacity。 */
+
+:root {
+  /* 背景层次 */
+  --bg-0: #0a0e17;
+  --bg-1: #111726;
+  --bg-2: #171f31;
+  --bg-3: #1f293e;
+
+  /* 文本 */
+  --fg-0: #f2f6fc;
+  --fg-1: #b6c2d6;
+  --fg-2: #7c8aa3;
+
+  /* 强调色 */
+  --accent: #4c8dff;
+  --accent-dim: #2f6ad9;
+  --accent-glow: rgba(76, 141, 255, 0.35);
+  --ok: #2ed3a0;
+  --warn: #ffb84d;
+  --err: #ff5f6d;
+
+  /* 描边与分隔 */
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.13);
+
+  /* 圆角 */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+
+  /* 阴影 */
+  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.42);
+  --shadow-lg: 0 22px 60px rgba(0, 0, 0, 0.55);
+
+  /* 动效曲线：略带回弹，收尾干脆 */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  --font-ui: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI",
+    system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  font-family: var(--font-ui);
+  color: var(--fg-0);
+  /* 外壳是应用界面，不是网页：禁掉文本选择与原生拖拽 */
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+
+/* 允许选择的区域显式开启 */
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.13);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+  background-clip: content-box;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+/* 无障碍：尊重系统的减少动效设置 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 键盘焦点可见 */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

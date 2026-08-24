@@ -23,9 +23,13 @@ from util.ui import (
     toast_stream,
     ToastMessage,
     ToastMessageManager,
-    ToastMessageManager,
     enable_min_to_tray,
     stop_tray,
+    # 外壳适配层（优先外壳，未启动自动回退 Tk）
+    ToastSession,
+    notify,
+    recording_state,
+    recognition,
 )
 
 # 4. 导出菜单处理器（供 Startup 使用）
@@ -45,4 +49,9 @@ __all__ = [
     'on_add_rectify_record',
     'on_add_hotword',
     'on_edit_context',
+    # 外壳适配层
+    'ToastSession',
+    'notify',
+    'recording_state',
+    'recognition',
 ]

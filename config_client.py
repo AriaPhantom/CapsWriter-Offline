@@ -58,6 +58,11 @@ class ClientConfig:
 
     enable_tray = True          # 客户端默认启用托盘图标功能
 
+    # 现代化外壳 UI（shell/ 目录，Tauri + WebView2）
+    # True：外壳在线时用它显示浮层/通知；外壳没启动会自动回退到 Tkinter
+    # False：始终使用 Tkinter（历史行为）
+    use_shell_ui = True
+
     # 日志配置
     log_level = 'INFO'          # 日志级别：'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'
 

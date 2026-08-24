@@ -274,6 +274,18 @@ class ResultProcessor:
         matched_hotwords = correction_result.matchs
         potential_hotwords = correction_result.similars
 
+        # 推送识别摘要给外壳 Dashboard（外壳未启动时为空操作）
+        try:
+            from util.ui.toast_adapter import recognition as _push_recognition
+            _push_recognition(
+                text,
+                original=original_text_stripped,
+                latency=delay,
+                hotwords=[hw for _origin, hw, _score in matched_hotwords],
+            )
+        except Exception as e:
+            logger.debug(f"推送识别摘要到外壳失败: {e}")
+
         # 1. 显示完全匹配/已替换的热词
         if matched_hotwords and Config.hot:
             # 提取热词文本 (现为 (原词, 热词, 分数))
