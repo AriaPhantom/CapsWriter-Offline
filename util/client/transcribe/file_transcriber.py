@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Optional
 from config_client import ClientConfig as Config
 from util.client.state import console
 from util.client.websocket_manager import WebSocketManager
+from util.tools.no_window import asyncio_no_window_kwargs
 from .media_tool import MediaTool
 from .result_handler import ResultHandler
 from . import logger
@@ -87,7 +88,8 @@ class FileTranscriber:
             process = await asyncio.create_subprocess_exec(
                 *ffmpeg_cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL
+                stderr=asyncio.subprocess.DEVNULL,
+                **asyncio_no_window_kwargs()
             )
             
             # 分块大小：1分钟音频 (16000 * 4 * 60 bytes)

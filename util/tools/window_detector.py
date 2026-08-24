@@ -5,6 +5,8 @@
 """
 import platform
 
+from util.tools.no_window import no_window_kwargs
+
 
 def get_active_window_info() -> dict:
     """
@@ -104,7 +106,8 @@ def _get_macos_window_info() -> dict:
         result = subprocess.run(
             ['osascript', '-e', script],
             capture_output=True,
-            text=True
+            text=True,
+            **no_window_kwargs()
         )
 
         if result.returncode == 0:
@@ -133,7 +136,8 @@ def _get_linux_window_info() -> dict:
         result = subprocess.run(
             ['wmctrl', '-G', '-a', ':ACTIVE:'],
             capture_output=True,
-            text=True
+            text=True,
+            **no_window_kwargs()
         )
 
         if result.returncode == 0:

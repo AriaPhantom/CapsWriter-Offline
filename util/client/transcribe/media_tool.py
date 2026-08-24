@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from util.client.state import console
+from util.tools.no_window import asyncio_no_window_kwargs
 from . import logger
 
 class MediaTool:
@@ -46,7 +47,8 @@ class MediaTool:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                **asyncio_no_window_kwargs()
             )
             stdout, stderr = await process.communicate()
             if process.returncode == 0:

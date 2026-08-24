@@ -21,6 +21,7 @@ from typing import Optional, Tuple, Union
 import numpy as np
 
 from config_client import ClientConfig as Config
+from util.tools.no_window import no_window_kwargs as _no_window_kwargs
 from . import logger
 
 
@@ -91,7 +92,15 @@ class AudioFileManager:
                 '-b:a', '192k',
                 str(file_path),
             ]
-            file_handle = Popen(ffmpeg_command, stdin=PIPE, stdout=DEVNULL, stderr=DEVNULL)
+            # Windows 下必须传 CREATE_NO_WINDOW：否则每次开始录音都会闪一个
+            # 黑色控制台窗口（这个方法在每次按下快捷键时被调用）
+            file_handle = Popen(
+                ffmpeg_command,
+                stdin=PIPE,
+                stdout=DEVNULL,
+                stderr=DEVNULL,
+                **_no_window_kwargs(),
+            )
             logger.debug(f"创建 MP3 文件: {file_path}")
         else:
             # 使用 wave 模块输出 WAV
