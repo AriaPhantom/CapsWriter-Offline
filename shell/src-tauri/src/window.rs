@@ -37,13 +37,8 @@ pub fn build_overlay(app: &AppHandle) -> tauri::Result<()> {
     .shadow(false)
     .build()?;
 
-    // 铺满主显示器工作区
-    if let Ok(Some(monitor)) = win.primary_monitor() {
-        let size = *monitor.size();
-        let pos = *monitor.position();
-        let _ = win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
-        let _ = win.set_size(tauri::PhysicalSize::new(size.width, size.height));
-    }
+    // 铺满主显示器
+    align_to_primary_monitor(&win);
 
     // 默认穿透，鼠标事件交给下层窗口
     let _ = win.set_ignore_cursor_events(true);
@@ -51,9 +46,53 @@ pub fn build_overlay(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// 把浮层对齐到主显示器整屏（含任务栏区域）。
+///
+/// 用整个 `monitor.size()` 而不是工作区：浮层是点击穿透的，盖住任务栏
+/// 不影响操作，而 CSS 里 `bottom: 8vh` 的换算需要以整屏高度为基准。
+///
+/// **必须可重复调用**：见 `ensure_overlay_visible` 的说明。
+fn align_to_primary_monitor(win: &tauri::WebviewWindow) {
+    let Ok(Some(monitor)) = win.primary_monitor() else {
+        return;
+    };
+    let size = *monitor.size();
+    let pos = *monitor.position();
+
+    // 尺寸/位置已经正确时就不再下发，避免每次录音都白白触发一次
+    // SetWindowPos 引起的重排。
+    let cur_pos = win.outer_position().ok();
+    let cur_size = win.outer_size().ok();
+    let aligned = cur_pos.map(|p| p.x == pos.x && p.y == pos.y).unwrap_or(false)
+        && cur_size
+            .map(|s| s.width == size.width && s.height == size.height)
+            .unwrap_or(false);
+    if aligned {
+        return;
+    }
+
+    let _ = win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+    let _ = win.set_size(tauri::PhysicalSize::new(size.width, size.height));
+}
+
 /// 确保浮层可见（幂等，热路径上调用）
+///
+/// 这里每次都重新校正几何与置顶，而不是只在建窗时做一次。原因是
+/// 「建窗那一刻」的显示环境未必可信，而错误状态不会自己恢复：
+///
+/// - **开机自启**：外壳随登录启动时，DWM / 显示器拓扑 / DPI 上下文可能
+///   都还在收敛。此时 `primary_monitor()` 拿到的尺寸是过渡值，浮层会被
+///   定在错误的矩形上（实测开机后为 `(-13,-13) 3866x2186`，而正确值是
+///   `(0,0) 3840x2160`），窗口虽然 `visible=true` 却一个像素都不合成，
+///   于是「按住说话时底部横幅不见了」。
+/// - **显示器变化**：插拔外显、改分辨率、改缩放之后，原来的矩形同样失效。
+///
+/// 校正很便宜（几何未变时直接返回），换来的是浮层不会因为一次
+/// 时序不巧就永久失效 —— 用户端的症状是功能整体消失，代价不对等。
 pub fn ensure_overlay_visible(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(OVERLAY_LABEL) {
+        // 顺序要紧：先摆正几何再 show，避免先显示出一个错位的空窗
+        align_to_primary_monitor(&win);
         if !win.is_visible().unwrap_or(false) {
             let _ = win.show();
         }
