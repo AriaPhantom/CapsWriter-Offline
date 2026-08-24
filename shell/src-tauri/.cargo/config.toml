@@ -1,0 +1,9 @@
+# 构建产物放到本地盘，不要放进 OneDrive。
+#
+# 原因：cargo 的 target/ 有 9000+ 个小文件、4GB 以上，放在同步盘里
+# OneDrive 会持续扫描上传，既拖慢构建也拖慢同步。node_modules 同理，
+# 用 shell/.npmrc 指到同一个位置。
+#
+# 这个目录不需要备份 —— 删掉重新 cargo build 即可重建。
+[build]
+target-dir = "C:/Dev/capswriter-shell-build/target"
