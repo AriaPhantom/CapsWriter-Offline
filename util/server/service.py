@@ -19,7 +19,18 @@ def start_recognizer_process():
 
     state = get_state()
     Cosmic.sockets_id = Manager().list()
-    stdin_fn = sys.stdin.fileno()
+
+    # 取 stdin 的 fd 传给子进程（子进程用它重开 stdin 以响应 Ctrl+C）。
+    # 用 pythonw.exe / 无控制台方式启动时 sys.stdin 是 None，
+    # 重定向到管道时 fileno() 也可能失败 —— 这两种情况传 None，
+    # 子进程会跳过重开 stdin。不能让它在这里抛异常：
+    # 那会使整个 server 启动失败，而 stdin 只是为了键盘中断。
+    stdin_fn = None
+    try:
+        if sys.stdin is not None:
+            stdin_fn = sys.stdin.fileno()
+    except (AttributeError, OSError, ValueError) as e:
+        logger.info(f"无法获取 stdin fd（无控制台环境），子进程将跳过 stdin: {e}")
     recognize_process = Process(target=init_recognizer,
                                 args=(Cosmic.queue_in,
                                       Cosmic.queue_out,

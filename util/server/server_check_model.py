@@ -119,7 +119,16 @@ def check_model() -> None:
         
         logger.error(f"模型文件检查失败，共 {len(missing_files)} 个文件缺失")
         console.print(error_msg)
-        input('按回车退出')
+
+        # 有控制台才等回车。无控制台启动（pythonw / 后台服务）时 stdin 不可读，
+        # input() 会抛 EOFError —— 那个异常会把真正的原因（模型缺失）
+        # 埋在一个看起来无关的堆栈里，反而更难排查。
+        try:
+            if sys.stdin is not None and sys.stdin.isatty():
+                input('按回车退出')
+        except (EOFError, OSError, ValueError):
+            pass
+
         lifecycle.cleanup()
         sys.exit(1)
 

@@ -62,7 +62,15 @@ def init_recognizer(queue_in: Queue, queue_out: Queue, sockets_id, stdin_fn):
 
     logger.info("识别子进程启动")
     logger.debug(f"系统平台: {system()}")
-    sys.stdin=os.fdopen(stdin_fn)
+
+    # 重开 stdin，让子进程能收到 Ctrl+C。
+    # stdin_fn 为 None 表示父进程没有可用的 stdin（pythonw / 无控制台启动），
+    # 此时跳过即可 —— 那种环境下本来也没有键盘中断可言。
+    if stdin_fn is not None:
+        try:
+            sys.stdin = os.fdopen(stdin_fn)
+        except (OSError, ValueError) as e:
+            logger.info(f"重开 stdin 失败，忽略: {e}")
 
     # 注册信号处理器
     signal.signal(signal.SIGINT, signal_handler)
