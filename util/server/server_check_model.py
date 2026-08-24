@@ -89,7 +89,13 @@ def check_model() -> None:
     - 'qwen_asr_0_6b'
 
         ''', style='bright_red')
-        input('按回车退出')
+        # 同下方缺失文件分支：无控制台启动时 input() 会抛 EOFError，
+        # 把真正的原因（模型类型不支持）埋进一个无关的堆栈里。
+        try:
+            if sys.stdin is not None and sys.stdin.isatty():
+                input('按回车退出')
+        except (EOFError, OSError, ValueError):
+            pass
         lifecycle.cleanup()
         sys.exit(1)
 
