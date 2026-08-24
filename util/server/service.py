@@ -9,6 +9,7 @@ from util.server.server_init_recognizer import init_recognizer
 from util.server.state import get_state
 from util.server.server_check_model import check_model
 from util.common.lifecycle import lifecycle
+from util.tools.kill_on_close_job import assign_process_to_job
 from . import logger
 
 
@@ -18,7 +19,11 @@ def start_recognizer_process():
     check_model()
 
     state = get_state()
-    Cosmic.sockets_id = Manager().list()
+    # 持有 Manager 本身，而不只是它产出的 list：清理时要显式 shutdown()，
+    # 否则那个 Manager 进程只能靠 atexit 回收（硬杀父进程时不会执行）。
+    manager = Manager()
+    state.sockets_id_manager = manager
+    Cosmic.sockets_id = manager.list()
 
     # 取 stdin 的 fd 传给子进程（子进程用它重开 stdin 以响应 Ctrl+C）。
     # 用 pythonw.exe / 无控制台方式启动时 sys.stdin 是 None，
@@ -31,13 +36,33 @@ def start_recognizer_process():
             stdin_fn = sys.stdin.fileno()
     except (AttributeError, OSError, ValueError) as e:
         logger.info(f"无法获取 stdin fd（无控制台环境），子进程将跳过 stdin: {e}")
+    # daemon=True 处理正常退出路径（解释器退出时 multiprocessing 会回收它）。
+    # 注意它**不**足以防止孤儿：那套回收跑在父进程的 atexit 里，而
+    # TerminateProcess（taskkill /F、任务管理器结束任务、崩溃）会跳过 atexit。
+    # 硬杀场景由下面的 Job Object 兜底。
     recognize_process = Process(target=init_recognizer,
                                 args=(Cosmic.queue_in,
                                       Cosmic.queue_out,
-                                      Cosmic.sockets_id, 
+                                      Cosmic.sockets_id,
                                       stdin_fn),
-                                daemon=False)
+                                daemon=True)
     recognize_process.start()
+
+    # 内核级兜底：把子进程加入 KILL_ON_JOB_CLOSE 的 job。
+    # 父进程一死，内核关闭其最后一个 job 句柄，job 内进程立即被终止，
+    # 不经过任何用户态代码 —— 这是硬杀场景下唯一可靠的机制。
+    #
+    # 识别子进程加载 sherpa-onnx 后提交约 4GB（OpenBLAS 按核心数预留线程栈，
+    # 24 核机器上尤其明显），泄漏一次的代价很高，值得这层保护。
+    if not assign_process_to_job(recognize_process.pid):
+        logger.warning(
+            "无法将识别子进程加入 Job Object；父进程被强制结束时可能残留子进程"
+        )
+    # Manager 进程同样纳入：它约占 900MB 提交，以前也会一起泄漏。
+    manager_proc = getattr(manager, '_process', None)
+    if manager_proc is not None and manager_proc.pid:
+        if not assign_process_to_job(manager_proc.pid):
+            logger.warning("无法将 Manager 进程加入 Job Object")
     state.recognize_process = recognize_process
     logger.info("识别子进程已启动")
 

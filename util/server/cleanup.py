@@ -60,7 +60,20 @@ def cleanup_server_resources():
     elif _recognize_process:
         logger.info("识别进程已退出")
 
-    # 3. 停止托盘图标
+    # 3. 关闭 Manager 进程
+    # Manager().list() 会起一个独立进程。以前这里没管它，靠 atexit 隐式回收，
+    # 于是每次异常退出都留下一个约 900MB 提交的孤儿。
+    _manager = state.sockets_id_manager
+    if _manager is not None:
+        logger.info("正在关闭 Manager 进程...")
+        try:
+            _manager.shutdown()
+            logger.info("Manager 进程已关闭")
+        except Exception as e:
+            logger.warning(f"关闭 Manager 失败（可能已退出）: {e}")
+        state.sockets_id_manager = None
+
+    # 4. 停止托盘图标
     stop_tray()
 
     logger.info("服务端资源清理完成")
