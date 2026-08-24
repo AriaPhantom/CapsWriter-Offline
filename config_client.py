@@ -65,6 +65,9 @@ class ClientConfig:
 
     # 日志配置
     log_level = 'INFO'          # 日志级别：'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'
+    log_retention_days = 30     # 历史日志保留天数（0 表示不清理）
+                                # 文件名带日期，轮转不会删旧日期的文件，
+                                # 不清理会一直累积（实测可达 900MB+）
 
     mic_seg_duration = 60       # 麦克风听写时分段长度：60秒
     mic_seg_overlap = 4         # 麦克风听写时分段重叠：4秒

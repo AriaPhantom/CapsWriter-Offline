@@ -184,7 +184,12 @@ def recognize(recognizer, punc_model, task: Task) -> Result:
                 time_per_char = result.duration / len(chars)
                 result.tokens = chars
                 result.timestamps = [i * time_per_char for i in range(len(chars))]
-                logger.warning(f"模型无时间戳，使用粗略估计: {len(chars)} 字符, {result.duration:.2f}s")
+                # 用 debug 而非 warning：Qwen-ASR 本身就不产时间戳，
+                # 均匀估计是这类模型的正常路径（听写用不到精确时间戳，
+                # 只有生成字幕才在意）。每次识别都打 WARNING 会淹没真正的告警。
+                logger.debug(
+                    f"模型无时间戳，使用粗略估计: {len(chars)} 字符, {result.duration:.2f}s"
+                )
         
         result = _results.pop(task.task_id)
         result.is_final = True

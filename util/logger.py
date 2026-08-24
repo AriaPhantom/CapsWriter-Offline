@@ -13,6 +13,56 @@ class Logger:
     _loggers = {}
 
     @classmethod
+    def _prune_old_logs(cls, log_dir: str, prefix: str) -> None:
+        """
+        删除超过保留期的历史日志。
+
+        保留天数取 `ClientConfig.log_retention_days`，缺省 30 天；
+        设为 0 或负数表示不清理。
+
+        只删自己前缀、且形如 `<prefix>_YYYYMMDD.log[.N]` 的文件，
+        不碰其它任何东西（比如外壳的 shell.err.log）。
+        """
+        try:
+            try:
+                from config_client import ClientConfig
+                days = int(getattr(ClientConfig, 'log_retention_days', 30))
+            except Exception:
+                days = 30
+
+            if days <= 0:
+                return
+
+            import re
+            import time as _time
+
+            cutoff = _time.time() - days * 86400
+            pattern = re.compile(
+                rf'^{re.escape(prefix)}_(\d{{8}})\.log(\.\d+)?$'
+            )
+
+            removed = 0
+            for entry in os.scandir(log_dir):
+                if not entry.is_file():
+                    continue
+                if not pattern.match(entry.name):
+                    continue
+                try:
+                    if entry.stat().st_mtime < cutoff:
+                        os.remove(entry.path)
+                        removed += 1
+                except OSError:
+                    # 文件被占用或权限不足：跳过即可，不该影响启动
+                    continue
+
+            if removed:
+                # 此时 logger 还没配好，用 print 记一笔（会进控制台/被重定向）
+                print(f'[logger] 已清理 {removed} 个超过 {days} 天的 {prefix} 日志')
+        except Exception as e:
+            # 清理失败绝不能阻碍程序启动
+            print(f'[logger] 清理历史日志时出错（已忽略）: {e}')
+
+    @classmethod
     def setup(cls, name: str, log_dir: str = None, level: str = 'INFO', max_bytes: int = 10 * 1024 * 1024, backup_count: int = 5, log_filename: str = None):
         """
         设置并返回一个日志记录器
@@ -66,6 +116,14 @@ class Logger:
              file_name_prefix = name
         
         log_file = os.path.join(log_dir, f'{file_name_prefix}_{datetime.now().strftime("%Y%m%d")}.log')
+
+        # 清理过期日志。
+        #
+        # RotatingFileHandler 只按大小轮转**同名**文件，而文件名带日期，
+        # 所以每天都会新开一个名字、旧日期的文件永久留存。
+        # 实测某台机器 logs/ 累积到 906MB / 205 个文件，其中 819MB
+        # 是 30 天前的。这里按保留天数清理，默认 30 天。
+        cls._prune_old_logs(log_dir, file_name_prefix)
 
         # 创建格式化器
         formatter = logging.Formatter(

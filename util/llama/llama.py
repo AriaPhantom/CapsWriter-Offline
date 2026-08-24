@@ -2,6 +2,7 @@ import sys
 import os
 import ctypes
 import codecs
+import re
 import struct
 import time
 from collections import deque, Counter
@@ -769,10 +770,19 @@ class ASRStreamDecoder:
         return remaining
 
 
+# 判定 llama.cpp 日志是否真的像错误。
+# 用 \b 词边界，避免 "call" 命中 "cannot" 这类子串误判。
+_LLAMA_BAD_RE = re.compile(
+    r'\b(error|errors|failed|failure|cannot|unable|invalid|'
+    r'unsupported|not supported|out of memory|oom|assert|'
+    r'assertion|aborted|abort\b(?!_)|corrupt|denied)\b'
+)
+
+
 def python_log_callback(level, message, user_data):
     """
     llama.cpp 日志回调函数
-    level: 
+    level:
         2 = ERROR
         3 = WARN
         4 = INFO
@@ -783,16 +793,26 @@ def python_log_callback(level, message, user_data):
         msg_str = message.decode('utf-8', errors='replace').strip()
         if not msg_str or msg_str in ['.', '\n']: return
         
-        if level == 2:
+        # llama.cpp 的 level 并不表达「严重程度」：它用 level 2 输出大量
+        # 常规加载信息（KV cache 大小、层分配、graph 统计…）。照搬成
+        # logger.error 会让日志里出现成百上千条假 ERROR ——
+        # 实测一天里 931 条假 ERROR 对 5 条真 ERROR，信噪比 1:186，
+        # 真出问题时根本翻不出来。
+        #
+        # 所以只把**确实像错误**的内容抬到 error/warning，其余降为 debug。
+        # 用词边界匹配，避免子串误判：
+        # 例如 `set_abort_callback: call` 里的 "call" 会被 "cannot" 之类的
+        # 朴素 `in` 判断命中，把一条常规信息又变成假 ERROR。
+        lowered = msg_str.lower()
+        looks_bad = _LLAMA_BAD_RE.search(lowered) is not None
+
+        if looks_bad:
             logger.error(f"[llama.cpp] {msg_str}")
         elif level == 3:
             logger.warning(f"[llama.cpp] {msg_str}")
-        elif level == 4:
-            logger.info(f"[llama.cpp] {msg_str}")
-        elif level >= 5:
-            logger.debug(f"[llama.cpp] {msg_str}")
         else:
-            logger.info(f"[llama.cpp] {msg_str}")
+            # 常规加载/调度信息：留在 debug，需要排障时把日志级别调到 DEBUG 即可
+            logger.debug(f"[llama.cpp] {msg_str}")
     except Exception as e:
         # 防止回调错误导致程序崩溃
         print(f"日志回调出错: {e}")
