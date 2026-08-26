@@ -300,6 +300,46 @@ def use_shell() -> bool:
     return shell_enabled() and shell_available()
 
 
+def start_bridge(wait: float = 0.0) -> bool:
+    """
+    预先建立到外壳的连接。**应在客户端启动阶段调用一次。**
+
+    为什么需要这一步：`use_shell()` 要求「已经连上」，而桥是懒加载的
+    —— 第一次推送事件时才创建单例并开始连。两件事撞在同一毫秒里，
+    于是**第一次按住快捷键必定被判为「外壳不在线」而丢弃**，浮层不亮。
+
+    这在开机场景下尤其明显：自启动脚本先拉客户端，外壳可能还没监听，
+    错过的不只是第一次 —— `_try_connect` 有 3 秒退避，`_sender_loop`
+    只在有事件时才推进，用户的观感就是「重启后横幅彻底没了」。
+
+    Args:
+        wait: 最多等待多少秒直到连上。0 表示只触发不等待。
+              启动阶段给一个小值（如 1.5s）即可，连不上也不影响主链路。
+
+    Returns:
+        bool: 返回时是否已连上（未启用外壳时恒为 False）
+    """
+    if not shell_enabled():
+        return False
+
+    bridge = get_bridge()      # 创建单例，sender 线程随即开始尝试连接
+
+    if wait > 0:
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            if bridge.is_available():
+                break
+            time.sleep(0.05)
+
+    ok = bridge.is_available()
+    if ok:
+        logger.info("外壳桥已就绪")
+    else:
+        # 不是错误：用户可能就没开外壳。后续会自动重连，届时浮层自然可用。
+        logger.info("外壳暂未连上，将在后台持续重试（不影响识别与上屏）")
+    return ok
+
+
 # ----------------------------------------------------
 # Toast 事件
 # ----------------------------------------------------

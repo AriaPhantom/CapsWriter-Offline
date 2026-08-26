@@ -102,6 +102,15 @@ def setup_client_components(base_dir):
     # 2. UI 提示
     TipsDisplay.show_mic_tips()
 
+    # 2.5 外壳桥：必须在快捷键就绪**之前**连上。
+    #
+    # 桥原本是懒加载的：第一次推送 UI 事件时才创建并开始连接。但
+    # `use_shell()` 判定的是「已经连上」，两者撞在同一毫秒里，导致
+    # 第一次按住快捷键的 recording_state 必定被丢弃 —— 浮层不亮。
+    # 开机时外壳可能比客户端启动得晚，这个状态会一直持续下去。
+    from util.ui.shell_bridge import start_bridge
+    start_bridge(wait=1.5)
+
     # 3. 热词
     logger.info("正在加载热词...")
     hotword_files = {
