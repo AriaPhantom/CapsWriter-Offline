@@ -39,10 +39,25 @@ npm run tauri build          # 出 exe + NSIS 安装包
 npx tauri build --no-bundle  # 只要 exe，构建更快
 ```
 
-产物：`shell/src-tauri/target/release/capswriter-shell.exe`（约 3.6 MB，常驻内存 ~25 MB）
+产物：`capswriter-shell.exe`（约 3.6 MB，常驻内存 ~25 MB）。注意 `target/` 已被
+`src-tauri/.cargo/config.toml` 重定向到 `C:/Dev/capswriter-shell-build/target`，
+产物不在仓库里。
 
 **注意**：不要用裸 `cargo build`。前端资源由 Tauri CLI 负责构建并嵌入，
 `cargo build` 出来的二进制会指向开发服务器地址，运行后是一片空白。
+
+这个坑很难自查，所以务必在部署前跑一次校验：
+
+```bash
+.\verify-build.ps1                                   # 查构建产物
+.\verify-build.ps1 -Path <部署路径>\capswriter-shell.exe   # 查部署副本
+```
+
+它检查前端资源清单有没有真的嵌进 exe（正确构建约 6 处，裸 `cargo build` 是 0 处），
+不通过就 exit 1。为什么需要它：空白外壳**没有任何报错** —— 托盘正常、桥正常监听、
+窗口能显示隐藏、日志干净，录音识别上屏全都工作，唯独浮层是空白页，横幅永远不出现。
+而透明浮层的像素在 Windows 上用 GDI 抓屏和 `PrintWindow` 都读不出可信结果，
+所以除了盯着屏幕看，几乎没有别的办法发现。这个故障曾经骗过三轮排查。
 
 开发模式（前端热更新）：
 
