@@ -32,9 +32,22 @@ UI 累计开销   24.7 ms   (Tk: 14724 ms → 快 596x)
 
 需要 Rust、Node、MSVC 生成工具、WebView2 Runtime（Win11 自带）。
 
+**用脚本，不要手敲命令**：
+
 ```bash
 cd shell
 npm install
+npm run ship            # 构建 + 校验 + 部署 + 重启，一条命令
+npm run ship -- -NoDeploy    # 只构建和校验
+npm run verify          # 只校验已有产物
+```
+
+[`build.ps1`](build.ps1) 固定用正确的构建命令，校验不通过就拒绝部署，并且
+替换而不是叠加 `dist/`。手敲命令连续三次踩同一个坑（见下），所以默认走脚本。
+
+底层命令（脚本内部用的就是这些）：
+
+```bash
 npm run tauri build          # 出 exe + NSIS 安装包
 npx tauri build --no-bundle  # 只要 exe，构建更快
 ```
@@ -46,7 +59,7 @@ npx tauri build --no-bundle  # 只要 exe，构建更快
 **注意**：不要用裸 `cargo build`。前端资源由 Tauri CLI 负责构建并嵌入，
 `cargo build` 出来的二进制会指向开发服务器地址，运行后是一片空白。
 
-这个坑很难自查，所以务必在部署前跑一次校验：
+这个坑很难自查，所以 `npm run ship` 会自动校验；也可以单独跑：
 
 ```bash
 .\verify-build.ps1                                   # 查构建产物
@@ -58,6 +71,10 @@ npx tauri build --no-bundle  # 只要 exe，构建更快
 窗口能显示隐藏、日志干净，录音识别上屏全都工作，唯独浮层是空白页，横幅永远不出现。
 而透明浮层的像素在 Windows 上用 GDI 抓屏和 `PrintWindow` 都读不出可信结果，
 所以除了盯着屏幕看，几乎没有别的办法发现。这个故障曾经骗过三轮排查。
+
+不依赖像素的行为判据：注入 `recording_state=false` 后浮层若 **20ms 左右**隐藏，
+说明前端 JS 在跑（主动调 `overlay_idle`）；若要 **1~2 秒**才消失，那是 Rust
+看门狗在兜底，即前端已死、外壳是空白的。
 
 开发模式（前端热更新）：
 

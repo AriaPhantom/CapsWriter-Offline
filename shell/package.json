@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "ship": "powershell -NoProfile -ExecutionPolicy Bypass -File ./build.ps1",
+    "verify": "powershell -NoProfile -ExecutionPolicy Bypass -File ./verify-build.ps1"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
